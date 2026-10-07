@@ -1,0 +1,19 @@
+# Generated model assets, observations and logs stay on the deployment host.
+/models/
+/data/
+/outputs/
+/checkpoint/
+__pycache__/
+*.py[cod]
+*.log
+*.pid
+*.om
+*.onnx
+*.safetensors
+.env
+.venv/
+.DS_Store
+# Upstream development metadata is not part of this deployment distribution.
+/openpi/.github/
+/openpi/.vscode/
+/openpi/.gitmodules

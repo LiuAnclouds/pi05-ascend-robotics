@@ -1,0 +1,26 @@
+{
+  "platform": {"soc": "Ascend310P1", "cann": "8.5.0", "model": "OpenPI pi05 Piper fine-tune"},
+  "part1_om_mean_ms": 259.9611499492312,
+  "part1_om_p95_ms": 260.6013652533875,
+  "part2_om_mean_ms": 21.86493100016378,
+  "e2e_model_ms": 467.79712100033066,
+  "full_action_onnx_om_cosine": 0.999999893649701,
+  "full_action_onnx_om_rmse": 0.000289930185577092,
+  "part1_reference_onnx_cosine": 0.9999682442208236,
+  "part1_reference_om_cosine": 0.9999929918455117,
+  "part2_reference_om_cosine": 0.9999998382674431,
+  "sources": {
+    "part1_latency": "official_part1_manual_om_benchmark20.json: warm, 20 runs",
+    "part2_latency_and_precision": "official_part2_fp16_om_validation.json: warm, 10 runs, single velocity",
+    "part1_onnx": "official_part1_manual_onnx_validation.json: full KV cache",
+    "part1_om": "official_part1_manual_om_validation.json: full KV cache",
+    "full_action": "diagnostic_20261007/onnx_live_replay.json: sample 005, full 10 steps, normalized 7D",
+    "e2e_time": "diagnostic_20261008/startup_order/real_om_replay_summary.json: one measured prediction, 2026-10-08 before migration"
+  },
+  "artifact_sha256": {
+    "part1": "fda5df92bcdfff37182a3f63ef6cd9993e2dc6b217275b148c69b981d6e18373",
+    "part2": "065e3037e7d5c60a78ff518e89ed1771749a08a06c98bd6e360975a8d256a92e"
+  },
+  "environment_migration": {"environment": "Pi05_ascend", "same_recorded_actions": true, "max_abs_difference": 0.0, "e2e_ms": 473.25815099975443},
+  "notes": "Historical reports retained in board release backup. Full-action reference is the adapted ONNX, not original JAX; does not validate original training transforms. Numerical agreement is not task success rate. All timing scopes exclude physical trajectory execution."
+}

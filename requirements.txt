@@ -1,0 +1,41 @@
+# Python 3.10, Linux aarch64. CANN 8.5 / driver / pyACL are installed separately.
+# Runtime
+numpy==1.26.4
+opencv-python-headless==4.11.0.86
+pillow==12.3.0
+sentencepiece==0.2.2
+python-can==4.6.1
+piper_sdk==0.6.2
+# ONNX export and CPU reference. OM execution does not need torch-npu.
+torch==2.5.1
+torchvision==0.20.1
+transformers==4.53.3
+safetensors==0.8.0
+onnx==1.23.1
+onnxruntime==1.23.2
+coloredlogs
+flatbuffers
+# OpenPI configuration imports these even for the PyTorch export path.
+jax==0.5.3
+jaxlib==0.5.3
+flax==0.10.2
+orbax-checkpoint==0.11.13
+augmax==0.4.1
+beartype==0.22.9
+jaxtyping==0.2.36
+einops==0.8.2
+optax==0.2.8
+fsspec==2025.9.0
+etils==1.13.0
+requests==2.34.2
+filelock==3.32.5
+tqdm==4.70.0
+# ATC Python operator adapters (provided by CANN, dependencies below).
+attrs==26.1.0
+cloudpickle==3.1.2
+decorator==5.3.1
+ml-dtypes==0.5.4
+psutil==7.2.2
+scipy==1.15.3
+sympy==1.13.1
+tornado==6.5.8
