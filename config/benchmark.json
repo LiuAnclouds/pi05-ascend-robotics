@@ -22,5 +22,6 @@
     "part2": "065e3037e7d5c60a78ff518e89ed1771749a08a06c98bd6e360975a8d256a92e"
   },
   "environment_migration": {"environment": "Pi05_ascend", "same_recorded_actions": true, "max_abs_difference": 0.0, "e2e_ms": 473.25815099975443},
+  "github_pull_verification": {"code_commit": "619ca7f", "same_recorded_actions": true, "max_abs_difference": 0.0, "all_finite": true, "e2e_ms": 471.61079500074266, "part1_ms": 244.85637899852009, "part2_mean_ms": 22.38562130041828},
   "notes": "Historical reports retained in board release backup. Full-action reference is the adapted ONNX, not original JAX; does not validate original training transforms. Numerical agreement is not task success rate. All timing scopes exclude physical trajectory execution."
 }
