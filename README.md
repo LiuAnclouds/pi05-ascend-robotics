@@ -13,23 +13,82 @@
 
 </div>
 
-这是官方 OpenPI π0.5 模型在香橙派昇腾平台上的部署项目，包含 ONNX 导出、ATC 编译、OM 推理、双相机采集和 Piper 控制。推荐按下面的 **Docker 教程**部署：在板端本地构建镜像，宿主机无需安装 Python 环境或 Conda。暂不提供公共预构建镜像。
+这是官方 OpenPI π0.5 模型在香橙派昇腾平台上的部署项目，包含 ONNX 导出、ATC 编译、OM 推理、双相机采集和 Piper 控制。推荐按下面的 **Docker 教程**部署：在板端本地构建镜像，宿主机无需安装项目的 Python 依赖或 Conda。暂不提供公共预构建镜像。
 
-## 1. 准备香橙派和 Docker
+## 1. 准备香橙派、昇腾环境和 Docker
 
-已验证平台：**ARM64 / Ascend310P1 / openEuler 22.03 LTS-SP3 / CANN 8.5.0**，Piper 机械臂、USB-CAN、两路 V4L2 相机。先按板卡厂商说明准备匹配的系统、昇腾驱动、CANN Toolkit 和 310P 算子包；本项目不会安装内核驱动。其他芯片或 CANN 版本需要重新编译、验证 OM。
+已验证平台：**Orange Pi AI Station / ARM64 / Ascend310P1 / openEuler 22.03 LTS-SP3 / CANN 8.5.0**，Piper 机械臂、USB-CAN、两路 V4L2 相机。安装顺序为 **板卡系统与配套驱动/固件 → CANN Toolkit → 310P 算子包 → Docker → 项目镜像**。其他芯片或 CANN 版本需要重新编译、验证 OM。
 
-下面命令均在香橙派上以 root 执行；普通账户先使用 `sudo -i`。Docker 已安装时可跳过安装命令：
+下面命令均在香橙派宿主机上以 root 执行；普通账户先使用 `sudo -i`。已有驱动和 CANN 时先检查，正常即可跳过首次安装：
+
+```bash
+npu-smi info
+cat /usr/local/Ascend/cann-8.5.0/aarch64-linux/ascend_toolkit_install.info
+cat /usr/local/Ascend/cann-8.5.0/aarch64-linux/ascend_ops_install.info
+```
+
+应看到 `310P1`、`Health: OK`；两份安装信息分别为 `Ascend-cann-toolkit`、`Ascend-cann-310p-ops`，版本均为 `8.5.0`。
+
+<details>
+<summary>首次安装：昇腾驱动和 CANN 8.5.0</summary>
+
+**获取系统和安装包**
+
+系统、板卡驱动和固件从 [Orange Pi AI Station 官方支持页](http://www.orangepi.org/html/hardWare/computerAndMicrocontrollers/service-and-support/Orange-Pi-AI-Station.html) 获取，按对应板型的手册准备系统。CANN 从 [昇腾官方下载页](https://www.hiascend.com/developer/download/community/result?module=cann) 选择 **8.5.0 / AArch64 / run**；下载可能需要登录并接受许可。安装前按 [CANN 8.5.0 安装指南](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/850/softwareinst/instg/instg_0000.html) 的物理机离线安装场景准备操作系统依赖。
+
+| 组件 | 本项目板端核对的版本或安装包 |
+| --- | --- |
+| 板卡驱动 | `7.6.T7.0.B056`（`npu-smi` 显示软件包版本 `26.0.t1`） |
+| 驱动安装包 | `Ascend-hdk-310p-npu-driver_7.6.t7.0.b056_linux-aarch64_chip-enable-opiaistation-260825.run` |
+| CANN Toolkit | `Ascend-cann-toolkit_8.5.0_linux-aarch64.run` |
+| 310P 算子包 | `Ascend-cann-310p-ops_8.5.0_linux-aarch64.run` |
+
+驱动为带 `opiaistation` 标识的板卡专用版本；不要直接用通用服务器驱动替换。固件按板卡手册与驱动配套。310P 算子包要与 Toolkit 同版本，不能用 310B、910B 或 A3 算子包代替。上表记录已验证组合，其他驱动版本需按官方配套关系确认。
+
+**安装驱动**
+
+若厂商系统已预装且 `npu-smi info` 正常，跳过本步。需要安装时，在已下载安装包的目录执行；下面命令仅适用于上表对应板卡和安装包：
+
+```bash
+bash ./Ascend-hdk-310p-npu-driver_7.6.t7.0.b056_linux-aarch64_chip-enable-opiaistation-260825.run --full
+```
+
+按安装器和板卡手册提示完成固件配套、重启要求；重新登录后执行 `npu-smi info`，确认设备正常再继续。
+
+**安装 Toolkit 和 310P 算子包**
+
+在两个 CANN 安装包所在目录按顺序执行。以下为首次安装；已有其他版本时按官方升级指南处理：
+
+```bash
+bash ./Ascend-cann-toolkit_8.5.0_linux-aarch64.run \
+  --install --install-path=/usr/local/Ascend
+source /usr/local/Ascend/cann-8.5.0/set_env.sh
+bash ./Ascend-cann-310p-ops_8.5.0_linux-aarch64.run --install
+```
+
+完成后核对版本和工具：
+
+```bash
+source /usr/local/Ascend/cann-8.5.0/set_env.sh
+cat /usr/local/Ascend/cann-8.5.0/aarch64-linux/ascend_toolkit_install.info
+cat /usr/local/Ascend/cann-8.5.0/aarch64-linux/ascend_ops_install.info
+atc --help
+npu-smi info
+```
+
+Toolkit 的 `--install-path` 指定父目录 `/usr/local/Ascend`，安装后版本目录为 `/usr/local/Ascend/cann-8.5.0`；加载它的环境后再安装算子包。已有自定义目录时，设置 `export PI05_CANN_ROOT=/实际安装目录`（该目录下须有 `set_env.sh`）。驱动和 CANN 安装在宿主机，`run_docker.sh` 将它们挂载给容器；`setup_docker.sh` 只构建项目镜像。
+
+</details>
+
+**安装 Docker**（已安装时跳过安装命令）：
 
 ```bash
 dnf install -y git docker-engine
 systemctl enable --now docker
 docker version
-npu-smi info
-test -f /usr/local/Ascend/cann-8.5.0/set_env.sh
 ```
 
-`docker version` 应显示 Client 和 Server，`npu-smi info` 应能看到昇腾设备。已有驱动/CANN 的系统可直接继续。以下教程不要求重新安装正常工作的驱动。
+`docker version` 应显示 Client 和 Server，随后继续构建项目镜像。
 
 ## 2. 克隆项目并构建镜像
 
