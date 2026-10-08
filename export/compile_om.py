@@ -24,12 +24,12 @@ def main() -> None:
     parser.add_argument('--part', type=int, choices=(1, 2), required=True,
                         help='1: vision/language prefix; 2: one denoising step.')
     parser.add_argument('--input', type=Path, help='ONNX file; defaults to the exported part.')
-    parser.add_argument('--output', type=Path, help='OM file; defaults to outputs/om/<part>.om.')
+    parser.add_argument('--output', type=Path, help='OM file; defaults to outputs/om/part<N>.om.')
     parser.add_argument('--soc', default='Ascend310P1', help='Target SoC (default: Ascend310P1).')
     args = parser.parse_args()
-    source = args.input or (DEFAULT_PART1_ONNX_DIR / '1.onnx'
-                           if args.part == 1 else DEFAULT_PART2_ONNX_DIR / '2.onnx')
-    output = args.output or ROOT / f'outputs/om/{args.part}.om'
+    source = args.input or (DEFAULT_PART1_ONNX_DIR / 'part1.onnx'
+                           if args.part == 1 else DEFAULT_PART2_ONNX_DIR / 'part2.onnx')
+    output = args.output or ROOT / f'outputs/om/part{args.part}.om'
     output.parent.mkdir(parents=True, exist_ok=True)
     prefix = output.with_suffix('') if output.suffix == '.om' else output
     produced = Path(f'{prefix}.om')

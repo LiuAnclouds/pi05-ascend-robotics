@@ -32,8 +32,8 @@ python runtime/activate_can.py
 models/weights/instrction_9.14_float32/model.safetensors
 models/paligemma-3b-pt-224/tokenizer.model
 config/norm_stats.json
-outputs/om/1.om
-outputs/om/2.om
+outputs/om/part1.om
+outputs/om/part2.om
 ```
 
 `config/norm_stats.json` 是本项目训练数据的统计，换权重需同步核对统计和动作约定。当前六关节为相对观测状态的增量，夹爪为绝对开度。
@@ -114,14 +114,14 @@ outputs/      ONNX/OM/运行报告（不入 Git）
 ```text
 outputs/
   onnx/
-    1/        1.onnx、外部权重、1.export.json
-    2/        2.onnx、2.export.json
-  om/         1.om、2.om，编译日志与验证结果
+    part1/    part1.onnx、外部权重、part1.export.json
+    part2/    part2.onnx、part2.export.json
+  om/         part1.om、part2.om，编译日志与验证结果
   runs/
     Infer_report_<时间>/    result.json、result.log
 ```
 
-导出记录为 `<编号>.export.json`，编译记录为 `<编号>.compile.json/.log`，精度验证结果为 `<编号>.validation.json`。这些记录在执行对应步骤时生成。Part1 原 `manual/` 目录已统一为 `onnx/1/`；只保留一个正式 Part1 导出入口。
+导出记录为 `part<N>.export.json`，编译记录为 `part<N>.compile.json/.log`，精度验证结果为 `part<N>.validation.json`。这些记录在执行对应步骤时生成。ONNX 和 OM 统一使用 `part1`、`part2` 命名；只保留一个正式 Part1 导出入口。
 
 `openpi/` 和 `runtime/acllite/` 的第三方来源及许可证见 [`THIRD_PARTY.md`](THIRD_PARTY.md)。CANN 默认 `/usr/local/Ascend/cann-8.5.0`，Conda 默认 `$HOME/miniconda3`，分别可用 `PI05_CANN_ROOT`、`PI05_CONDA_ROOT` 覆盖。入口均支持 `--help`。
 

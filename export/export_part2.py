@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
                         help="Checkpoint directory containing model.safetensors.")
     parser.add_argument("--input", type=Path, default=DEFAULT_PART2_INPUT,
                         help="Prepared Part2 tensor file (.pt).")
-    parser.add_argument("--output", type=Path, default=DEFAULT_PART2_ONNX_DIR / "2.onnx",
+    parser.add_argument("--output", type=Path, default=DEFAULT_PART2_ONNX_DIR / "part2.onnx",
                         help="Destination ONNX file.")
     parser.add_argument("--dtype", choices=("float32", "float16"), default="float16",
                         help="Arithmetic dtype used while tracing the graph.")

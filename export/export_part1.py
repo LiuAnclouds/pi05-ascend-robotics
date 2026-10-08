@@ -33,7 +33,7 @@ def main() -> None:
                         help="Checkpoint directory containing model.safetensors.")
     parser.add_argument("--input", type=Path, default=DEFAULT_PART1_INPUT,
                         help="Prepared Part1 tensor file (.pt).")
-    parser.add_argument("--output", type=Path, default=DEFAULT_PART1_ONNX_DIR / "1.onnx",
+    parser.add_argument("--output", type=Path, default=DEFAULT_PART1_ONNX_DIR / "part1.onnx",
                         help="Destination ONNX file.")
     args = parser.parse_args()
     import numpy as np
