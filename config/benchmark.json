@@ -23,5 +23,23 @@
   },
   "environment_migration": {"environment": "Pi05_ascend", "same_recorded_actions": true, "max_abs_difference": 0.0, "e2e_ms": 473.25815099975443},
   "github_pull_verification": {"code_commit": "619ca7f", "same_recorded_actions": true, "max_abs_difference": 0.0, "all_finite": true, "e2e_ms": 471.61079500074266, "part1_ms": 244.85637899852009, "part2_mean_ms": 22.38562130041828},
+  "docker_validation": {
+    "date": "2026-10-08",
+    "image": "pi05-ascend-robotics:cann8.5",
+    "architecture": "arm64",
+    "cann": "8.5.0 (mounted from host)",
+    "same_recorded_actions": true,
+    "max_abs_difference": 0.0,
+    "all_finite": true,
+    "denoising_steps": 10,
+    "e2e_ms": 468.2534410021617,
+    "part1_ms": 245.83958799485117,
+    "part2_mean_ms": 21.962166600860655,
+    "tiny_torch_onnx_atc_acl": "passed",
+    "dual_camera_and_can_read": "passed",
+    "sigint_report_finalization": "passed",
+    "motion_sent": false,
+    "full_model_reexport": false
+  },
   "notes": "Historical reports retained in board release backup. Full-action reference is the adapted ONNX, not original JAX; does not validate original training transforms. Numerical agreement is not task success rate. All timing scopes exclude physical trajectory execution."
 }

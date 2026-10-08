@@ -8,8 +8,10 @@ pi05_conda_root="${PI05_CONDA_ROOT:-$HOME/miniconda3}"
 pi05_restore_nounset=0
 case $- in *u*) pi05_restore_nounset=1; set +u ;; esac
 source "$pi05_cann_root/set_env.sh"
-source "$pi05_conda_root/etc/profile.d/conda.sh"
-conda activate Pi05_ascend
+if [ "${PI05_CONTAINER:-0}" != 1 ]; then
+    source "$pi05_conda_root/etc/profile.d/conda.sh"
+    conda activate Pi05_ascend
+fi
 export PYTHONPATH="$pi05_project_dir/runtime/acllite:$pi05_project_dir/runtime/acllite/acllite:$pi05_cann_root/python/site-packages${PYTHONPATH:+:$PYTHONPATH}"
 if [ "$pi05_restore_nounset" = 1 ]; then set -u; fi
 unset pi05_restore_nounset

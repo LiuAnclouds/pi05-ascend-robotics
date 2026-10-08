@@ -5,6 +5,7 @@
 **OpenPI π0.5 + Ascend310P1 + Piper deployment**
 
 ![Python](https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-ARM64-2496ED?logo=docker&logoColor=white)
 ![CANN](https://img.shields.io/badge/CANN-8.5.0-D71920)
 ![SoC](https://img.shields.io/badge/Ascend-310P1-DB2626)
 ![Precision](https://img.shields.io/badge/Precision-FP16%20%2B%20FP32-0E8A16)
@@ -58,6 +59,31 @@ bash run_inference.sh \
 常用参数：`--steps 10`（去噪次数）、`--action-fps 30`（轨迹频率）、`--motion-speed 15`（Piper 速度百分比）、`--iterations 0`（持续运行）。每轮保持完整 **50 点**轨迹。USB 重插后需确认视角映射；物理急停需手动解除。程序不会自动判断任务完成。
 
 当前为“推理 → 下发完整轨迹”的顺序流程，30 Hz 的 50 点约需 1.67 秒，尚未实现 RTC/异步轨迹融合。相机独立持续采集，只保留最新帧。
+
+## Docker 部署
+
+在 ARM64 香橙派上构建，镜像统一包含导出、编译所需的 Python 依赖及推理代码，无需宿主机 Conda。宿主机仍需安装 Docker、昇腾驱动和 CANN 8.5.0；启动脚本会将 CANN/驱动只读挂载进容器。
+
+```bash
+docker build -t pi05-ascend-robotics:cann8.5 .
+bash run_docker.sh python runtime/activate_can.py
+bash run_docker.sh \
+  --task "Pick up the blue cylindrical box and place it in the white square basket." \
+  --send-motion
+```
+
+不传 `--send-motion` 只推理。`Ctrl+C` 会传递到推理程序，执行停止和报告保存。权重与配置只读挂载，数据和输出保存在宿主机项目的 `data/`、`outputs/`，不会随容器退出丢失。容器使用主机网络访问 CAN，并映射已连接的昇腾设备及 `/dev/video*`，不使用 `--privileged`。
+
+容器内导出、编译使用同一个脚本启动原 Python 入口，例如：
+
+```bash
+bash run_docker.sh python export/export_part1.py
+bash run_docker.sh python export/compile_om.py --part 1
+```
+
+Part2 同理使用 `export_part2.py`、`--part 2`；输入准备和精度验证入口也可按此调用。镜像不包含权重、OM、原始数据、驱动或 CANN 安装包。`PI05_IMAGE` 可指定镜像标签。无法直连 Docker Hub 时，可在构建命令中加 `--build-arg BASE_IMAGE=docker.m.daocloud.io/library/python:3.10-slim-bookworm` 使用镜像代理。
+
+板端验证：真实 Piper 样本完整 10 步推理 **468.25 ms**，动作与宿主机结果逐值一致；小模型 PyTorch→ONNX→ATC→OM、两路相机读取、CAN 状态读取及 Ctrl+C 保存报告均通过。本轮未发送机械臂动作，也未重新编译完整 π0.5 模型。
 
 ## 导出和编译
 
