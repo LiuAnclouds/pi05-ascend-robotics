@@ -11,7 +11,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from include.project_paths import DEFAULT_PART1_MANUAL_ONNX_DIR, DEFAULT_PART2_ONNX_DIR
+from include.project_paths import DEFAULT_PART1_ONNX_DIR, DEFAULT_PART2_ONNX_DIR
 
 
 def main() -> None:
@@ -24,16 +24,17 @@ def main() -> None:
     parser.add_argument('--part', type=int, choices=(1, 2), required=True,
                         help='1: vision/language prefix; 2: one denoising step.')
     parser.add_argument('--input', type=Path, help='ONNX file; defaults to the exported part.')
-    parser.add_argument('--output', type=Path, help='OM file; defaults to outputs/om/part<N>.om.')
+    parser.add_argument('--output', type=Path, help='OM file; defaults to outputs/om/<part>.om.')
     parser.add_argument('--soc', default='Ascend310P1', help='Target SoC (default: Ascend310P1).')
     args = parser.parse_args()
-    source = args.input or (DEFAULT_PART1_MANUAL_ONNX_DIR / 'prefix_part1_manual.onnx'
-                           if args.part == 1 else DEFAULT_PART2_ONNX_DIR / 'denoise_part2.onnx')
-    output = args.output or ROOT / f'outputs/om/part{args.part}.om'
+    source = args.input or (DEFAULT_PART1_ONNX_DIR / '1.onnx'
+                           if args.part == 1 else DEFAULT_PART2_ONNX_DIR / '2.onnx')
+    output = args.output or ROOT / f'outputs/om/{args.part}.om'
     output.parent.mkdir(parents=True, exist_ok=True)
-    if output.exists():
-        parser.error(f'Output already exists: {output}. Choose --output for a candidate.')
     prefix = output.with_suffix('') if output.suffix == '.om' else output
+    produced = Path(f'{prefix}.om')
+    if produced.exists():
+        parser.error(f'Output already exists: {produced}. Choose --output for a candidate.')
     import onnx
     graph = onnx.load(str(source), load_external_data=False).graph
     shapes = []
@@ -47,22 +48,32 @@ def main() -> None:
                f"--input_shape={';'.join(shapes)}", '--precision_mode_v2=origin', '--log=info']
     if args.part == 1:
         command.append('--op_select_implmode=high_performance_for_all')
-    log = prefix.with_suffix('.compile.log')
+    log = Path(f'{prefix}.compile.log')
     print(f'======== Model Module | Part {args.part} ========', flush=True)
     print('Precision: preserve ONNX dtypes (origin)', flush=True)
     print(shlex.join(command), flush=True)
     print(f'Compiler log: {log}', flush=True)
-    with log.open('w') as stream:
-        subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT, check=True)
-    produced = prefix.with_suffix('.om')
-    # Some CANN releases suffix cross-compilation output with the target host.
-    if not produced.exists():
-        variants = list(prefix.parent.glob(prefix.name + '*linux_aarch64.om'))
-        if len(variants) != 1:
-            raise RuntimeError(f'ATC returned success but expected OM was not found: {produced}')
-        variants[0].rename(produced)
-    prefix.with_suffix('.compile.json').write_text(json.dumps(
-        {'part': args.part, 'command': command, 'output': str(produced)}, indent=2) + '\n')
+    metadata_path = Path(f'{prefix}.compile.json')
+    metadata = {'part': args.part, 'command': command, 'output': str(produced),
+                'log': str(log), 'status': 'running'}
+    metadata_path.write_text(json.dumps(metadata, indent=2) + '\n')
+    try:
+        with log.open('w') as stream:
+            completed = subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT)
+        metadata['returncode'] = completed.returncode
+        completed.check_returncode()
+        # Some CANN releases suffix cross-compilation output with the target host.
+        if not produced.exists():
+            variants = list(prefix.parent.glob(prefix.name + '*linux_aarch64.om'))
+            if len(variants) != 1:
+                raise RuntimeError(f'ATC returned success but expected OM was not found: {produced}')
+            variants[0].rename(produced)
+        metadata['status'] = 'ok'
+    except Exception as error:
+        metadata.update(status='failed', error=str(error))
+        raise
+    finally:
+        metadata_path.write_text(json.dumps(metadata, indent=2) + '\n')
     print(f'OM ready: {produced}', flush=True)
 
 

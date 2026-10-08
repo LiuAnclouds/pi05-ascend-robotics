@@ -5,51 +5,6 @@ from __future__ import annotations
 import torch
 
 
-class PrefixGraph(torch.nn.Module):
-    """Expose OpenPI prefix embedding and KV-cache generation as one graph."""
-    def __init__(self, model):
-        """Create a prefix graph around an official Pi0.5 model.
-
-        Args:
-            model: Loaded official ``PI0Pytorch`` model.
-
-        Returns:
-            None. The wrapped model is stored on the graph instance.
-        """
-        super().__init__(); self.model = model
-    def __repr__(self):
-        """Return a stable human-readable graph name.
-
-        Returns:
-            The graph name used in diagnostics and exporter messages.
-        """
-        return "PrefixGraph(official_openpi_pi05)"
-    def forward(self, image0, image1, image2, mask0, mask1, mask2, tokens, token_mask):
-        """Build prefix embeddings and flatten the generated KV cache.
-
-        Args:
-            image0, image1, image2: Three normalized image tensors.
-            mask0, mask1, mask2: Boolean availability masks for the images.
-            tokens: Token IDs for the task/state prompt.
-            token_mask: Boolean validity mask for ``tokens``.
-
-        Returns:
-            A tuple ``(past_kv_tensor, prefix_pad_masks)`` for Part2.
-        """
-        prefix_embs, prefix_pad_masks, _ = self.model.embed_prefix(
-            [image0, image1, image2], [mask0, mask1, mask2], tokens, token_mask)
-        prefix_position_ids = torch.cumsum(prefix_pad_masks.to(torch.int64), dim=1) - 1
-        pad_float = prefix_pad_masks.to(torch.float32)
-        valid_prefix = pad_float[:, None, :] * pad_float[:, :, None]
-        prefix_att_2d = (1.0 - valid_prefix) * (-2.3819763e38)
-        self.model.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"
-        _, cache = self.model.paligemma_with_expert.forward(
-            attention_mask=prefix_att_2d, position_ids=prefix_position_ids,
-            past_key_values=None, inputs_embeds=[prefix_embs, None], use_cache=True)
-        legacy = cache.to_legacy_cache()
-        return torch.cat([tensor for pair in legacy for tensor in pair], dim=0), prefix_pad_masks
-
-
 class DenoiseGraph(torch.nn.Module):
     """Expose one official OpenPI action-expert denoising step."""
     def __init__(self, model):

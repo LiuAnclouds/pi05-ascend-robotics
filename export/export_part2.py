@@ -17,14 +17,13 @@ from include.export_defs import (
     DEFAULT_PART2_ONNX_OPSET,
     DEFAULT_PART2_ONNX_DIR,
     DEFAULT_PART2_INPUT,
-    DEFAULT_REPORT_DIR,
     DEFAULT_WEIGHTS,
 )
 def parse_args() -> argparse.Namespace:
     """Parse the small public Part2 ONNX export interface.
 
     Returns:
-        Parsed checkpoint, input, output, metrics, and precision options.
+        Parsed checkpoint, input, output, and precision options.
     """
     parser = argparse.ArgumentParser(
         description="Export one official Pi0.5 Part2 denoising step to ONNX.",
@@ -34,10 +33,8 @@ def parse_args() -> argparse.Namespace:
                         help="Checkpoint directory containing model.safetensors.")
     parser.add_argument("--input", type=Path, default=DEFAULT_PART2_INPUT,
                         help="Prepared Part2 tensor file (.pt).")
-    parser.add_argument("--output", type=Path, default=DEFAULT_PART2_ONNX_DIR / "denoise_part2.onnx",
+    parser.add_argument("--output", type=Path, default=DEFAULT_PART2_ONNX_DIR / "2.onnx",
                         help="Destination ONNX file.")
-    parser.add_argument("--metrics", type=Path, default=DEFAULT_REPORT_DIR / "official_part2_export.json",
-                        help="JSON file for export metadata and finiteness checks.")
     parser.add_argument("--dtype", choices=("float32", "float16"), default="float16",
                         help="Arithmetic dtype used while tracing the graph.")
     return parser.parse_args()
@@ -75,8 +72,7 @@ def main() -> None:
     metrics = {"framework": "official_openpi", "model": "pi05", "checkpoint": str(args.weights),
                "status": "ok", "dtype": args.dtype, "onnx": str(args.output), "opset": DEFAULT_PART2_ONNX_OPSET,
                "export_ms": (time.perf_counter() - started) * 1000.0, "output_shape": list(output.shape)}
-    args.metrics.parent.mkdir(parents=True, exist_ok=True)
-    args.metrics.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    args.output.with_suffix(".export.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     print(json.dumps(metrics, indent=2))
 
 

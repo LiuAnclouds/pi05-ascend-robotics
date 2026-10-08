@@ -32,6 +32,7 @@ from runtime.piper import (
     send_motion_chunk, prepare_motion, require_motion_ready, MotionNotReady,
 )
 from runtime.report import RunReport, timestamp
+from include.project_paths import DEFAULT_RUN_DIR
 
 
 def parse_args() -> argparse.Namespace:
@@ -60,7 +61,7 @@ def parse_args() -> argparse.Namespace:
     common.add_argument("--iterations", type=int, default=0,
                         help="Prediction count; 0 means run continuously until Ctrl+C.")
     common.add_argument("--output", type=Path,
-                        help="JSON report path; defaults to outputs/runs/Infer_report_<timestamp>.json.")
+                        help="JSON report path; defaults to outputs/runs/Infer_report_<timestamp>/result.json.")
 
     hardware = parser.add_argument_group(
         "hardware input",
@@ -114,7 +115,7 @@ def main() -> int:
     args = parse_args()
     started_at = datetime.now(ZoneInfo("Asia/Shanghai"))
     if args.output is None:
-        args.output = PROJECT_ROOT / "outputs/runs" / f"Infer_report_{started_at:%Y%m%d_%H%M%S_%f}.json"
+        args.output = DEFAULT_RUN_DIR / f"Infer_report_{started_at:%Y%m%d_%H%M%S_%f}" / "result.json"
     report = RunReport(args.output, vars(args))
     section("Pi0.5 OpenPI | Real-time inference")
     status("Task", args.task)

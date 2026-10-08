@@ -47,7 +47,8 @@ class RunReport:
 
     The JSONL journal is flushed/fsynced at each event. It remains useful after
     abrupt termination; the final JSON is assembled in a streaming pass, so a
-    continuous run does not retain all trajectories in memory.
+    continuous run does not retain all trajectories in memory. The temporary
+    journal is removed only after the complete report has been saved.
     """
 
     def __init__(self, path: Path, settings: dict):
@@ -56,6 +57,9 @@ class RunReport:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.journal_path = self.path.with_suffix(".jsonl")
         self.log_path = self.path.with_suffix(".log")
+        for output in (self.path, self.journal_path, self.log_path):
+            if output.exists():
+                raise FileExistsError(f"Run output already exists: {output}. Choose a new --output.")
         self.session = {"started_at": timestamp(), "settings": _json_value(settings),
                         "journal": str(self.journal_path), "diagnostic_log": str(self.log_path),
                         "dimensions": ["J1_deg", "J2_deg", "J3_deg", "J4_deg", "J5_deg", "J6_deg", "gripper_mm"],
@@ -89,7 +93,8 @@ class RunReport:
         self._journal.close()
         temp = self.path.with_suffix(".json.tmp")
         with temp.open("w", encoding="utf-8") as target:
-            header = {"schema_version": 2, "status": outcome, "session": self.session,
+            session = {key: value for key, value in self.session.items() if key != "journal"}
+            header = {"schema_version": 2, "status": outcome, "session": session,
                       "finished_at": timestamp(), "summary": _json_value(summary)}
             target.write(pretty_json(header)[:-2] + ',\n  "rounds": [\n')
             first = True
@@ -111,7 +116,7 @@ class RunReport:
             with self.journal_path.open(encoding="utf-8") as source:
                 for line in source:
                     item = json.loads(line)
-                    if item["event"] not in ("prediction", "round_finished"):
+                    if item["event"] not in ("prediction", "round_finished", "session_started", "session_finished"):
                         target.write(("" if first else ",\n") + "    " + pretty_json(item, 2))
                         first = False
             target.write("\n  ]\n}\n")
@@ -119,3 +124,4 @@ class RunReport:
             os.fsync(target.fileno())
         os.replace(temp, self.path)
         self._log.close()
+        self.journal_path.unlink()

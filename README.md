@@ -32,8 +32,8 @@ python runtime/activate_can.py
 models/weights/instrction_9.14_float32/model.safetensors
 models/paligemma-3b-pt-224/tokenizer.model
 config/norm_stats.json
-outputs/om/part1.om
-outputs/om/part2.om
+outputs/om/1.om
+outputs/om/2.om
 ```
 
 `config/norm_stats.json` 是本项目训练数据的统计，换权重需同步核对统计和动作约定。当前六关节为相对观测状态的增量，夹爪为绝对开度。
@@ -67,7 +67,7 @@ bash run_inference.sh \
 source include/environment.sh
 python export/prepare_input.py --sample data/sample.npz
 python export/prepare_part2_input.py
-python export/export_part1_manual.py
+python export/export_part1.py
 python export/export_part2.py
 python export/compile_om.py --part 1
 python export/compile_om.py --part 2
@@ -94,7 +94,7 @@ Part1 使用显式 Gemma 层图、opset 17；Part2 使用官方 action-expert �
 
 这些是单样本数值一致性和耗时指标，不代表真实抓取成功率。完整动作基准是适配后的 ONNX，不能据此证明原始 JAX 训练处理链完全一致；KV 指标包含全张量。数据来源见 [`config/benchmark.json`](config/benchmark.json)。
 
-运行报告保存在 `outputs/runs/Infer_report_<时间>`：`.jsonl` 实时事件、`.json` 退出时生成的最终报告、`.log` 异常和 SDK 输出。完整动作、关节反馈、相机时间戳及分模块耗时会保存；不录制相机视频。
+每次推理单独保存在 `outputs/runs/Infer_report_<时间>/`：`result.json` 保存完整动作、关节反馈、相机时间戳及分模块耗时，`result.log` 保存异常和 SDK 输出。运行中的 `result.jsonl` 实时落盘，最终报告保存成功后自动移除；突然断电时保留它用于排查。不录制相机视频。指定 `--output` 可自选报告位置，已有运行记录不会覆盖。
 
 ## 目录
 
@@ -108,6 +108,20 @@ models/       本地权重/tokenizer（不入 Git）
 data/         本地样本和处理张量（不入 Git）
 outputs/      ONNX/OM/运行报告（不入 Git）
 ```
+
+所有生成结果只分三类，相关记录跟随对应文件保存：
+
+```text
+outputs/
+  onnx/
+    1/        1.onnx、外部权重、1.export.json
+    2/        2.onnx、2.export.json
+  om/         1.om、2.om，编译日志与验证结果
+  runs/
+    Infer_report_<时间>/    result.json、result.log
+```
+
+导出记录为 `<编号>.export.json`，编译记录为 `<编号>.compile.json/.log`，精度验证结果为 `<编号>.validation.json`。这些记录在执行对应步骤时生成。Part1 原 `manual/` 目录已统一为 `onnx/1/`；只保留一个正式 Part1 导出入口。
 
 `openpi/` 和 `runtime/acllite/` 的第三方来源及许可证见 [`THIRD_PARTY.md`](THIRD_PARTY.md)。CANN 默认 `/usr/local/Ascend/cann-8.5.0`，Conda 默认 `$HOME/miniconda3`，分别可用 `PI05_CANN_ROOT`、`PI05_CONDA_ROOT` 覆盖。入口均支持 `--help`。
 

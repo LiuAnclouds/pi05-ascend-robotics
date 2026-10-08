@@ -15,7 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from include.project_paths import DEFAULT_PART2_INPUT, DEFAULT_REPORT_DIR, DEFAULT_WEIGHTS
+from include.project_paths import DEFAULT_PART2_INPUT, DEFAULT_WEIGHTS
 from include.runtime_defs import DEFAULT_PART2_OM
 
 
@@ -35,11 +35,13 @@ def main() -> None:
                         help="Prepared Part2 tensor file (.pt).")
     parser.add_argument("--om", type=Path, default=DEFAULT_PART2_OM,
                         help="Part2 OM file to validate.")
-    parser.add_argument("--output", type=Path, default=DEFAULT_REPORT_DIR / "part2_om_validation.json",
-                        help="JSON report destination.")
+    parser.add_argument("--output", type=Path,
+                        help="JSON report; defaults to <OM name>.validation.json beside the OM.")
     parser.add_argument("--runs", type=int, default=10,
                         help="Measured OM executions after one warm-up run.")
     args = parser.parse_args()
+    if args.output is None:
+        args.output = args.om.with_suffix(".validation.json")
     import torch
 
     root = Path(__file__).resolve().parents[1]
