@@ -8,6 +8,8 @@ import json
 import math
 import os
 from pathlib import Path
+import queue
+import threading
 from zoneinfo import ZoneInfo
 
 
@@ -43,12 +45,12 @@ def pretty_json(value, depth: int = 0) -> str:
 
 
 class RunReport:
-    """Persist predictions before sending, then finalize a structured JSON report.
+    """Queue prediction snapshots, then finalize a structured JSON report.
 
-    The JSONL journal is flushed/fsynced at each event. It remains useful after
-    abrupt termination; the final JSON is assembled in a streaming pass, so a
-    continuous run does not retain all trajectories in memory. The temporary
-    journal is removed only after the complete report has been saved.
+    A single bounded writer serializes and fsyncs every event outside the
+    control path. Normal shutdown drains all events; sudden power loss can
+    lose queued/in-flight events. A full queue or writer error is surfaced,
+    never silently dropped. Finalization streams the journal to limit memory.
     """
 
     def __init__(self, path: Path, settings: dict):
@@ -65,9 +67,15 @@ class RunReport:
                         "dimensions": ["J1_deg", "J2_deg", "J3_deg", "J4_deg", "J5_deg", "J6_deg", "gripper_mm"],
                         "action_convention": "First six delta values are relative to the observation state; gripper is absolute.",
                         "feedback_note": "Command counts are host calls, not controller acknowledgements or grasp success.",
+                        "journal_note": "Background writer, up to 8 queued events; shutdown drains all, abrupt power loss may lose pending events.",
                         "nonfinite_encoding": "Nonfinite values become null; finite flags remain false."}
         self._journal = self.journal_path.open("w", encoding="utf-8")
         self._log = self.log_path.open("w", encoding="utf-8", buffering=1)
+        self._queue = queue.Queue(maxsize=8)
+        self._error = None
+        self._closed = False
+        self._writer = threading.Thread(target=self._write_events, name="inference-report", daemon=True)
+        self._writer.start()
         self.event("session_started", self.session)
         self.path.write_text(pretty_json({"schema_version": 2, "status": "running",
                                          "session": self.session,
@@ -75,11 +83,41 @@ class RunReport:
                              encoding="utf-8")
 
     def event(self, name: str, data: dict) -> None:
-        """Append a timestamped event and durably flush it to the JSONL journal."""
+        """Snapshot an event into a bounded queue; return before serialization/fsync.
+
+        Args: name identifies the event; data is JSON-compatible mutable data.
+        Later caller mutations cannot change the queued snapshot. Queue/write
+        failures raise RuntimeError so control can stop and preserve evidence.
+        """
+        self.check_writer()
+        if self._closed:
+            raise RuntimeError("Report writer is closed")
         item = _json_value({"event": name, "timestamp": timestamp(), "data": data})
-        self._journal.write(json.dumps(item, ensure_ascii=False, allow_nan=False) + "\n")
-        self._journal.flush()
-        os.fsync(self._journal.fileno())
+        try:
+            self._queue.put_nowait(item)
+        except queue.Full as error:
+            raise RuntimeError("Report writer queue is full; check output storage") from error
+
+    def check_writer(self) -> None:
+        """Raise any background I/O failure without waiting for disk operations."""
+        if self._error is not None:
+            raise RuntimeError(f"Report writer failed: {self._error}") from self._error
+
+    def _write_events(self) -> None:
+        """Consume FIFO snapshots, fsync each, and expose errors to the main loop."""
+        while True:
+            item = self._queue.get()
+            try:
+                if item is None:
+                    return
+                if self._error is None:
+                    self._journal.write(json.dumps(item, ensure_ascii=False, allow_nan=False) + "\n")
+                    self._journal.flush()
+                    os.fsync(self._journal.fileno())
+            except Exception as error:
+                self._error = error
+            finally:
+                self._queue.task_done()
 
     @contextlib.contextmanager
     def diagnostics(self):
@@ -89,8 +127,16 @@ class RunReport:
 
     def finish(self, outcome: str, summary: dict) -> None:
         """Stream completed/failed rounds and control events to an atomic final JSON."""
-        self.event("session_finished", {"outcome": outcome, **summary})
-        self._journal.close()
+        try:
+            self._queue.join()
+            self.event("session_finished", {"outcome": outcome, **summary})
+        finally:
+            self._closed = True
+            self._queue.put(None)
+            self._writer.join()
+            self._journal.close()
+            self._log.close()
+        self.check_writer()
         temp = self.path.with_suffix(".json.tmp")
         with temp.open("w", encoding="utf-8") as target:
             session = {key: value for key, value in self.session.items() if key != "journal"}
@@ -98,19 +144,21 @@ class RunReport:
                       "finished_at": timestamp(), "summary": _json_value(summary)}
             target.write(pretty_json(header)[:-2] + ',\n  "rounds": [\n')
             first = True
-            pending = None
+            pending = {}
             with self.journal_path.open(encoding="utf-8") as source:
                 for line in source:
                     item = json.loads(line)
                     if item["event"] == "prediction":
-                        pending = item["data"]
+                        pending[item["data"]["iteration"]] = item["data"]
                     elif item["event"] == "round_finished":
                         record = item["data"]
                         target.write(("" if first else ",\n") + "    " + pretty_json(record, 2))
-                        first, pending = False, None
-            if pending is not None:
-                pending["outcome"] = "interrupted_before_execution_record"
-                target.write(("" if first else ",\n") + "    " + pretty_json(pending, 2))
+                        first = False
+                        pending.pop(record["iteration"], None)
+            for record in pending.values():
+                record["outcome"] = "interrupted_before_execution_record"
+                target.write(("" if first else ",\n") + "    " + pretty_json(record, 2))
+                first = False
             target.write('\n  ],\n  "events": [\n')
             first = True
             with self.journal_path.open(encoding="utf-8") as source:

@@ -66,6 +66,27 @@ def read_piper_state(piper) -> np.ndarray:
     return raw / 1000.0
 
 
+def read_piper_feedback(piper) -> dict:
+    """Copy joint/gripper values and their SDK receive timestamps; send nothing.
+
+    Args: piper is the connected SDK interface.
+    Returns: raw state (degrees/mm), host sample time, individual feedback
+        receive times and ages in milliseconds. These are not exposure times.
+    """
+    message = piper.GetArmJointMsgs()
+    joints = message.joint_state
+    joint_stamp = float(message.time_stamp)
+    values = [getattr(joints, f'joint_{index}') for index in range(1, 7)]
+    gripper = piper.GetArmGripperMsgs()
+    values.append(gripper.gripper_state.grippers_angle)
+    gripper_stamp = float(gripper.time_stamp)
+    now = time.time()
+    return {'host_time': now, 'state_raw': (np.asarray(values, dtype=np.float32) / 1000.0).tolist(),
+            'joint_timestamp': joint_stamp, 'gripper_timestamp': gripper_stamp,
+            'joint_age_ms': (now - joint_stamp) * 1000.0,
+            'gripper_age_ms': (now - gripper_stamp) * 1000.0}
+
+
 def read_motion_status(piper) -> dict:
     """Return copied controller/driver feedback; input is an SDK connection.
 
@@ -225,7 +246,7 @@ def prepare_motion(piper, speed: int, *, on_event: Callable | None = None) -> di
 
 def send_motion_chunk(
     piper, action: np.ndarray, speed: int, fps: float, prepared: bool = False,
-    progress: dict | None = None,
+    progress: dict | None = None, check_pending: Callable | None = None,
 ) -> dict:
     """Send a denormalized seven-dimensional action trajectory to Piper.
 
@@ -237,6 +258,8 @@ def send_motion_chunk(
         prepared: Whether :func:`prepare_motion` was already called for this
             session. Keeping the default ``False`` preserves standalone callers.
         progress: Optional mutable record, updated even if sending is interrupted.
+        check_pending: Optional nonblocking background-error check; must not
+            perform disk I/O. Exceptions stop sending before the next point.
 
     Returns:
         Command count, first/last command start times from ``perf_counter``,
@@ -261,13 +284,14 @@ def send_motion_chunk(
     first_command = last_command = None
     max_interval = 0.0
     for index, point in enumerate(trajectory):
+        if check_pending is not None:
+            check_pending()
         feedback = read_motion_status(piper)
         progress["last_feedback"] = feedback
         _validate_feedback(feedback)
         if not _ready(feedback):
             raise MotionNotReady("Controller mode or enable state changed during sending", feedback)
-        sample = {"point": index, "host_time": time.time(),
-                  "state_raw": read_piper_state(piper).tolist(), "controller": feedback}
+        sample = {"point": index, **read_piper_feedback(piper), "controller": feedback}
         progress["feedback_samples"].append(sample)
         joints = np.rint(point[:6] * 1000.0).astype(np.int32)
         command_started = time.perf_counter()

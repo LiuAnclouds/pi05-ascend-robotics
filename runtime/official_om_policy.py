@@ -57,7 +57,8 @@ def delta_actions_to_absolute(action_delta: np.ndarray, state: np.ndarray) -> np
 class OfficialOMPolicy:
     """Own ACL resources and execute the verified official Pi0.5 OM pair."""
 
-    def __init__(self, part1_om: Path, part2_om: Path, tokenizer: Path, stats: Path, steps: int = 10):
+    def __init__(self, part1_om: Path, part2_om: Path, tokenizer: Path, stats: Path, steps: int = 10,
+                 *, resident_cache: bool = True):
         """Initialize ACL resources, OM handles, tokenizer, and normalization.
 
         Args:
@@ -66,6 +67,8 @@ class OfficialOMPolicy:
             tokenizer: SentencePiece tokenizer model path.
             stats: JSON normalization statistics path.
             steps: Number of Part2 denoising steps per prediction.
+            resident_cache: Share prefix device buffers; False retains the
+                host-copy reference path for regression measurements.
 
         Returns:
             None. ACL model resources are allocated for this policy instance.
@@ -89,6 +92,8 @@ class OfficialOMPolicy:
         self.resource.init()
         self.part1 = AclLiteModel(str(part1_om))
         self.part2 = AclLiteModel(str(part2_om))
+        from runtime.om_cache import DevicePrefixCache
+        self.device_cache = DevicePrefixCache(self.part1, self.part2) if resident_cache else None
 
     def close(self) -> None:
         """Release model handles and ACL resources.
@@ -99,6 +104,7 @@ class OfficialOMPolicy:
         Returns:
             None. References are cleared so ACL cleanup can run.
         """
+        self.device_cache = None
         self.part1 = None
         self.part2 = None
         self.resource = None
@@ -159,7 +165,8 @@ class OfficialOMPolicy:
         ]
 
     def predict_inputs(
-        self, inputs: list[np.ndarray], seed: int = 0, state: np.ndarray | None = None
+        self, inputs: list[np.ndarray], seed: int = 0, state: np.ndarray | None = None,
+        *, return_cache: bool = True,
     ) -> dict[str, Any]:
         """Run Part1 once and Part2 for the configured denoising steps.
 
@@ -167,6 +174,8 @@ class OfficialOMPolicy:
             inputs: Eight Part1 OM input arrays.
             seed: Random seed used to initialize the normalized action noise.
             state: Current seven-dimensional Piper state for converting joint deltas to targets.
+            return_cache: Copy KV/mask to the host for diagnostics; live control
+                sets False because it only consumes the final actions.
 
         Returns:
             Normalized actions, denormalized deltas, optional absolute targets, timings, and cache data.
@@ -174,10 +183,14 @@ class OfficialOMPolicy:
         if len(inputs) != 8:
             raise ValueError(f"expected eight Part1 inputs, got {len(inputs)}")
         part1_started = time.perf_counter()
-        prefix_result = self.part1.execute(inputs)
+        prefix_result = (self.device_cache.execute(inputs) if self.device_cache is not None
+                         else self.part1.execute(inputs))
         part1_ms = (time.perf_counter() - part1_started) * 1000.0
-        past_kv = np.ascontiguousarray(np.asarray(prefix_result[0], dtype=np.float16))
-        prefix_pad_masks = np.ascontiguousarray(np.asarray(prefix_result[1], dtype=np.bool_))
+        if self.device_cache is not None:
+            past_kv, prefix_pad_masks = prefix_result
+        else:
+            past_kv = np.ascontiguousarray(np.asarray(prefix_result[0], dtype=np.float16))
+            prefix_pad_masks = np.ascontiguousarray(np.asarray(prefix_result[1], dtype=np.bool_))
         rng = np.random.default_rng(seed)
         action = np.ascontiguousarray(rng.standard_normal((1, 50, 32), dtype=np.float32).astype(np.float16))
         dt = np.float16(-1.0 / self.steps)
@@ -203,6 +216,9 @@ class OfficialOMPolicy:
         )
         action_target = delta_actions_to_absolute(action_delta, state) if state is not None else None
         action_raw = action_target if action_target is not None else action_delta
+        if return_cache and self.device_cache is not None:
+            past_kv, prefix_pad_masks = self.device_cache.to_host()
+            prefix_pad_masks = np.asarray(prefix_pad_masks, dtype=np.bool_)
         return {
             "action_normalized": action_normalized,
             "action_delta": action_delta.astype(np.float32),
@@ -210,6 +226,6 @@ class OfficialOMPolicy:
             "action_raw": action_raw.astype(np.float32),
             "part1_ms": part1_ms,
             "part2_ms": part2_ms,
-            "past_kv": past_kv,
-            "prefix_pad_masks": prefix_pad_masks,
+            "past_kv": past_kv if return_cache else None,
+            "prefix_pad_masks": prefix_pad_masks if return_cache else None,
         }

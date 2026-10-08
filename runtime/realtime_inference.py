@@ -178,7 +178,7 @@ def main() -> int:
             warmup_state = read_piper_state(piper) if piper is not None else state
             warmup_inputs = policy.make_inputs(cv2.cvtColor(first, cv2.COLOR_BGR2RGB),
                                               cv2.cvtColor(second, cv2.COLOR_BGR2RGB), warmup_state, args.task)
-        warmup_result = policy.predict_inputs(warmup_inputs, seed=args.seed, state=warmup_state)
+        warmup_result = policy.predict_inputs(warmup_inputs, seed=args.seed, state=warmup_state, return_cache=False)
         if not np.isfinite(warmup_result["action_delta"]).all():
             raise RuntimeError("Model warm-up produced nonfinite actions")
         report.event("warmup_finished", {"duration_ms": (time.perf_counter() - warmup_started) * 1000.0})
@@ -194,6 +194,7 @@ def main() -> int:
 
         while args.iterations == 0 or iteration < args.iterations:
             cycle_started = time.perf_counter()
+            report.check_writer()
             capture_ms, camera_metadata = 0.0, None
             observation_at = timestamp()
             observation_started = time.perf_counter()
@@ -210,7 +211,7 @@ def main() -> int:
                                             cv2.cvtColor(second, cv2.COLOR_BGR2RGB), state, args.task)
             inference_started_at = timestamp()
             started = time.perf_counter()
-            result = policy.predict_inputs(inputs, seed=args.seed + iteration, state=state)
+            result = policy.predict_inputs(inputs, seed=args.seed + iteration, state=state, return_cache=False)
             total_ms = (time.perf_counter() - started) * 1000.0
             action_target = result["action_target"]
             action_raw = action_target if action_target is not None else result["action_delta"]
@@ -249,7 +250,7 @@ def main() -> int:
                         raise RuntimeError("Cannot send delta actions without the current Piper state")
                     motion_started = time.perf_counter()
                     send_motion_chunk(piper, action_target[0], args.motion_speed, args.action_fps,
-                                      prepared=True, progress=record["execution"])
+                                      prepared=True, progress=record["execution"], check_pending=report.check_writer)
                     record["outcome"] = "completed"
                 else:
                     record["outcome"] = "completed"
@@ -284,7 +285,10 @@ def main() -> int:
         status("Stop", "Ctrl+C received", "wait")
     except Exception as error:
         outcome, failure = "failed", f"{type(error).__name__}: {error}"
-        report.event("failure", {"stage": stage, "error": failure, "feedback": getattr(error, "feedback", None)})
+        try:
+            report.event("failure", {"stage": stage, "error": failure, "feedback": getattr(error, "feedback", None)})
+        except Exception as report_error:
+            status("Report", str(report_error), "error")
         with report.diagnostics():
             traceback.print_exc()
         status("Error", f"{stage}: {error}", "error")
@@ -306,9 +310,13 @@ def main() -> int:
                 report.event(name, {"result": "request_sent" if name == "quick_stop" else "finished"})
             except Exception as error:
                 outcome, failure = "failed", failure or f"{name}: {error}"
-                report.event("cleanup_error", {"operation": name, "error": str(error)})
-        report.finish(outcome, {"predictions": iteration, "completed_rounds": completed,
-                                "last_stage": stage, "error": failure})
+                status("Cleanup", f"{name}: {error}", "error")
+        try:
+            report.finish(outcome, {"predictions": iteration, "completed_rounds": completed,
+                                    "last_stage": stage, "error": failure})
+        except Exception as error:
+            outcome = "failed"
+            status("Report", f"Finalization failed; preserve journal: {error}", "error")
         section("Inference stopped")
         status("Result", f"{outcome} | predictions={iteration} | completed={completed}")
         status("Report", str(args.output), "title")

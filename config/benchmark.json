@@ -1,21 +1,22 @@
 {
   "platform": {"soc": "Ascend310P1", "cann": "8.5.0", "model": "OpenPI pi05 Piper fine-tune"},
-  "part1_om_mean_ms": 259.9611499492312,
-  "part1_om_p95_ms": 260.6013652533875,
-  "part2_om_mean_ms": 21.86493100016378,
-  "e2e_model_ms": 467.79712100033066,
+  "part1_om_mean_ms": 229.70490490261,
+  "part1_om_p95_ms": 230.42659440106944,
+  "part2_om_mean_ms": 12.212993259890936,
+  "e2e_model_ms": 354.19832969928393,
   "full_action_onnx_om_cosine": 0.999999893649701,
   "full_action_onnx_om_rmse": 0.000289930185577092,
   "part1_reference_onnx_cosine": 0.9999682442208236,
   "part1_reference_om_cosine": 0.9999929918455117,
   "part2_reference_om_cosine": 0.9999998382674431,
   "sources": {
-    "part1_latency": "official_part1_manual_om_benchmark20.json: warm, 20 runs",
-    "part2_latency_and_precision": "official_part2_fp16_om_validation.json: warm, 10 runs, single velocity",
+    "part1_latency": "outputs/runs/Runtime_benchmark_20261008_192456/comparison.json: resident KV cache, warm, 10 runs",
+    "part2_latency": "outputs/runs/Runtime_benchmark_20261008_192456/comparison.json: resident KV cache, 10 predictions with 10 steps each",
+    "part2_precision": "official_part2_fp16_om_validation.json: single velocity",
     "part1_onnx": "official_part1_manual_onnx_validation.json: full KV cache",
     "part1_om": "official_part1_manual_om_validation.json: full KV cache",
     "full_action": "diagnostic_20261007/onnx_live_replay.json: sample 005, full 10 steps, normalized 7D",
-    "e2e_time": "diagnostic_20261008/startup_order/real_om_replay_summary.json: one measured prediction, 2026-10-08 before migration"
+    "e2e_time": "outputs/runs/Runtime_benchmark_20261008_192456/comparison.json: 10 alternating saved-input runs, 2026-10-08"
   },
   "artifact_sha256": {
     "part1": "fda5df92bcdfff37182a3f63ef6cd9993e2dc6b217275b148c69b981d6e18373",
@@ -41,5 +42,6 @@
     "motion_sent": false,
     "full_model_reexport": false
   },
-  "notes": "Historical reports retained in board release backup. Full-action reference is the adapted ONNX, not original JAX; does not validate original training transforms. Numerical agreement is not task success rate. All timing scopes exclude physical trajectory execution."
+  "runtime_cache": {"host_copy_mean_ms": 467.9187747009564, "device_cache_mean_ms": 354.19832969928393, "final_actions_exactly_equal": true, "changed_observation_cache_equal": true, "denoising_steps": 10, "trajectory_points": 50},
+  "notes": "Historical reports retained in board release backup. Full-action reference is the adapted ONNX, not original JAX; does not validate original training transforms. Numerical agreement is not task success rate. All timing scopes exclude physical trajectory execution. Runtime measurements use saved real input and no CAN motion."
 }
