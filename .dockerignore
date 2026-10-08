@@ -16,6 +16,7 @@ __pycache__
 *.safetensors
 .env
 .venv
+.model-download-*
 openpi/.git
 openpi/.github
 openpi/.vscode

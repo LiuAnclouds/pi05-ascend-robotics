@@ -12,6 +12,7 @@ __pycache__/
 *.safetensors
 .env
 .venv/
+.model-download-*/
 .DS_Store
 # Upstream development metadata is not part of this deployment distribution.
 /openpi/.github/
