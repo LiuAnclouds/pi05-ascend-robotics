@@ -259,12 +259,26 @@ def main() -> int:
                     action_to_send = smooth_motion_trajectory(
                         action_target[0], state, send_state
                     )
+                    rebased_raw = np.asarray(action_target[0], dtype=np.float32).copy()
+                    rebased_raw[:, :6] += (send_state[:6] - state[:6])[None, :]
+                    raw_steps = np.diff(rebased_raw[:, :6], axis=0)
+                    sent_steps = np.diff(action_to_send[:, :6], axis=0)
                     record["motion_state_raw"] = send_state.tolist()
                     record["action_sent"] = action_to_send.tolist()
                     record["smoothing"] = {
                         "method": "rebase_smoothstep_step_limit",
                         "transition_points": 6,
                         "max_joint_step_deg": 1.2,
+                        "raw_rebased_first_jump_deg": float(
+                            np.max(np.abs(rebased_raw[0, :6] - send_state[:6]))
+                        ),
+                        "sent_first_jump_deg": float(
+                            np.max(np.abs(action_to_send[0, :6] - send_state[:6]))
+                        ),
+                        "raw_rebased_max_step_deg": float(np.max(np.abs(raw_steps)))
+                        if len(raw_steps) else 0.0,
+                        "sent_max_step_deg": float(np.max(np.abs(sent_steps)))
+                        if len(sent_steps) else 0.0,
                     }
                     record["first_sent_target"] = action_to_send[0].tolist()
                     motion_started = time.perf_counter()
