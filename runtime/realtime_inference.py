@@ -29,7 +29,8 @@ from include.runtime_defs import (
 from runtime.input_data import load_saved_inputs
 from runtime.piper import (
     connect_piper, parse_state, quick_stop, read_piper_state,
-    send_motion_chunk, prepare_motion, require_motion_ready, MotionNotReady,
+    send_motion_chunk, smooth_motion_trajectory, prepare_motion,
+    require_motion_ready, MotionNotReady,
 )
 from runtime.report import RunReport, timestamp
 from include.project_paths import DEFAULT_RUN_DIR
@@ -211,14 +212,17 @@ def main() -> int:
                                             cv2.cvtColor(second, cv2.COLOR_BGR2RGB), state, args.task)
             inference_started_at = timestamp()
             started = time.perf_counter()
-            result = policy.predict_inputs(inputs, seed=args.seed + iteration, state=state, return_cache=False)
+            # Reuse one diffusion noise seed for all synchronous control cycles.
+            # This removes avoidable block-to-block stochastic trajectory drift.
+            prediction_seed = args.seed
+            result = policy.predict_inputs(inputs, seed=prediction_seed, state=state, return_cache=False)
             total_ms = (time.perf_counter() - started) * 1000.0
             action_target = result["action_target"]
             action_raw = action_target if action_target is not None else result["action_delta"]
             record = {
                 "iteration": iteration, "timestamp": timestamp(), "observation_at": observation_at,
                 "inference_started_at": inference_started_at, "inference_finished_at": timestamp(),
-                "seed": args.seed + iteration,
+                "seed": prediction_seed,
                 "mode": "saved_input" if saved_inputs is not None else ("live_motion" if motion else "live_shadow"),
                 "task": args.task, "action_shape": list(action_raw.shape),
                 "action_finite": bool(np.isfinite(action_raw).all()),
@@ -248,8 +252,23 @@ def main() -> int:
                 if motion:
                     if action_target is None:
                         raise RuntimeError("Cannot send delta actions without the current Piper state")
+                    # Inference takes long enough for the arm to move on the
+                    # previous block. Re-read the actual state and make the
+                    # first command continuous before sending any point.
+                    send_state = read_piper_state(piper)
+                    action_to_send = smooth_motion_trajectory(
+                        action_target[0], state, send_state
+                    )
+                    record["motion_state_raw"] = send_state.tolist()
+                    record["action_sent"] = action_to_send.tolist()
+                    record["smoothing"] = {
+                        "method": "rebase_smoothstep_step_limit",
+                        "transition_points": 6,
+                        "max_joint_step_deg": 1.2,
+                    }
+                    record["first_sent_target"] = action_to_send[0].tolist()
                     motion_started = time.perf_counter()
-                    send_motion_chunk(piper, action_target[0], args.motion_speed, args.action_fps,
+                    send_motion_chunk(piper, action_to_send, args.motion_speed, args.action_fps,
                                       prepared=True, progress=record["execution"], check_pending=report.check_writer)
                     record["outcome"] = "completed"
                 else:
