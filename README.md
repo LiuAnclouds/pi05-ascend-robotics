@@ -2,95 +2,48 @@
 
 # π0.5 · Ascend Robotics
 
-**OpenPI π0.5 + Ascend310P1 + Piper deployment**
+OpenPI π0.5 模型导出与 Piper 机械臂部署
 
 ![Python](https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-ARM64-2496ED?logo=docker&logoColor=white)
 ![CANN](https://img.shields.io/badge/CANN-8.5.0-D71920)
 ![SoC](https://img.shields.io/badge/Ascend-310P1-DB2626)
-![Precision](https://img.shields.io/badge/Precision-FP16%20%2B%20FP32-0E8A16)
 ![License](https://img.shields.io/badge/License-Apache--2.0-blue)
+
+[快速部署](#快速部署) · [模型导出](#模型导出) · [文件与日志](#文件与日志) · [驱动与 CANN 安装](#驱动与-cann-安装)
 
 </div>
 
-这是官方 OpenPI π0.5 模型在香橙派昇腾平台上的部署项目，包含 ONNX 导出、ATC 编译、OM 推理、双相机采集和 Piper 控制。推荐按下面的 **Docker 教程**部署：在板端本地构建镜像，宿主机无需安装项目的 Python 依赖或 Conda。暂不提供公共预构建镜像。
+基于官方 OpenPI，支持 ONNX 导出、ATC 编译和 OM 实机推理。使用一个 Docker 镜像管理运行环境，集成双相机采集与 Piper 机械臂控制。
 
-## 1. 准备香橙派、昇腾环境和 Docker
+**适用平台：** Orange Pi AI Station · ARM64 · Ascend310P1 · openEuler 22.03 LTS-SP3 · CANN 8.5.0。
 
-已验证平台：**Orange Pi AI Station / ARM64 / Ascend310P1 / openEuler 22.03 LTS-SP3 / CANN 8.5.0**，Piper 机械臂、USB-CAN、两路 V4L2 相机。安装顺序为 **板卡系统与配套驱动/固件 → CANN Toolkit → 310P 算子包 → Docker → 项目镜像**。其他芯片或 CANN 版本需要重新编译、验证 OM。
+## 性能
 
-下面命令均在香橙派宿主机上以 root 执行；普通账户先使用 `sudo -i`。已有驱动和 CANN 时先检查，正常即可跳过首次安装：
+| 指标 | 实测结果 |
+| --- | ---: |
+| Part1 推理 | **259.96 ms**（预热后 20 次平均） |
+| Part2 单步推理 | **21.86 ms**（10 次单步平均） |
+| 完整推理（10 步去噪） | **467.80 ms**（单次测量） |
+| ONNX / OM 动作余弦相似度 | **0.999999894** |
+| ONNX / OM 动作 RMSE | **0.00028993** |
 
-```bash
-npu-smi info
-cat /usr/local/Ascend/cann-8.5.0/aarch64-linux/ascend_toolkit_install.info
-cat /usr/local/Ascend/cann-8.5.0/aarch64-linux/ascend_ops_install.info
-```
+使用真实 Piper 样本测量。各项延迟独立统计，不含相机采集和机械臂运动；精度比较同输入下的最终归一化动作，不代表抓取成功率。[查看基准数据](config/benchmark.json)
 
-应看到 `310P1`、`Health: OK`；两份安装信息分别为 `Ascend-cann-toolkit`、`Ascend-cann-310p-ops`，版本均为 `8.5.0`。
+## 快速部署
 
-<details>
-<summary>首次安装：昇腾驱动和 CANN 8.5.0</summary>
+以下命令在香橙派宿主机以 root 执行。宿主机需已安装匹配的驱动、CANN 8.5.0 Toolkit 和 310P 算子包，首次装机请先完成 [驱动与 CANN 安装](#驱动与-cann-安装)。
 
-**获取系统和安装包**
+### 1. 构建 Docker 镜像
 
-系统、板卡驱动和固件从 [Orange Pi AI Station 官方支持页](http://www.orangepi.org/html/hardWare/computerAndMicrocontrollers/service-and-support/Orange-Pi-AI-Station.html) 获取，按对应板型的手册准备系统。CANN 从 [昇腾官方下载页](https://www.hiascend.com/developer/download/community/result?module=cann) 选择 **8.5.0 / AArch64 / run**；下载可能需要登录并接受许可。安装前按 [CANN 8.5.0 安装指南](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/850/softwareinst/instg/instg_0000.html) 的物理机离线安装场景准备操作系统依赖。
-
-| 组件 | 本项目板端核对的版本或安装包 |
-| --- | --- |
-| 板卡驱动 | `7.6.T7.0.B056`（`npu-smi` 显示软件包版本 `26.0.t1`） |
-| 驱动安装包 | `Ascend-hdk-310p-npu-driver_7.6.t7.0.b056_linux-aarch64_chip-enable-opiaistation-260825.run` |
-| CANN Toolkit | `Ascend-cann-toolkit_8.5.0_linux-aarch64.run` |
-| 310P 算子包 | `Ascend-cann-310p-ops_8.5.0_linux-aarch64.run` |
-
-驱动为带 `opiaistation` 标识的板卡专用版本；不要直接用通用服务器驱动替换。固件按板卡手册与驱动配套。310P 算子包要与 Toolkit 同版本，不能用 310B、910B 或 A3 算子包代替。上表记录已验证组合，其他驱动版本需按官方配套关系确认。
-
-**安装驱动**
-
-若厂商系统已预装且 `npu-smi info` 正常，跳过本步。需要安装时，在已下载安装包的目录执行；下面命令仅适用于上表对应板卡和安装包：
-
-```bash
-bash ./Ascend-hdk-310p-npu-driver_7.6.t7.0.b056_linux-aarch64_chip-enable-opiaistation-260825.run --full
-```
-
-按安装器和板卡手册提示完成固件配套、重启要求；重新登录后执行 `npu-smi info`，确认设备正常再继续。
-
-**安装 Toolkit 和 310P 算子包**
-
-在两个 CANN 安装包所在目录按顺序执行。以下为首次安装；已有其他版本时按官方升级指南处理：
-
-```bash
-bash ./Ascend-cann-toolkit_8.5.0_linux-aarch64.run \
-  --install --install-path=/usr/local/Ascend
-source /usr/local/Ascend/cann-8.5.0/set_env.sh
-bash ./Ascend-cann-310p-ops_8.5.0_linux-aarch64.run --install
-```
-
-完成后核对版本和工具：
-
-```bash
-source /usr/local/Ascend/cann-8.5.0/set_env.sh
-cat /usr/local/Ascend/cann-8.5.0/aarch64-linux/ascend_toolkit_install.info
-cat /usr/local/Ascend/cann-8.5.0/aarch64-linux/ascend_ops_install.info
-atc --help
-npu-smi info
-```
-
-Toolkit 的 `--install-path` 指定父目录 `/usr/local/Ascend`，安装后版本目录为 `/usr/local/Ascend/cann-8.5.0`；加载它的环境后再安装算子包。已有自定义目录时，设置 `export PI05_CANN_ROOT=/实际安装目录`（该目录下须有 `set_env.sh`）。驱动和 CANN 安装在宿主机，`run_docker.sh` 将它们挂载给容器；`setup_docker.sh` 只构建项目镜像。
-
-</details>
-
-**安装 Docker**（已安装时跳过安装命令）：
+安装 Docker 和 Git（已安装可跳过）：
 
 ```bash
 dnf install -y git docker-engine
 systemctl enable --now docker
-docker version
 ```
 
-`docker version` 应显示 Client 和 Server，随后继续构建项目镜像。
-
-## 2. 克隆项目并构建镜像
+克隆项目并构建：
 
 ```bash
 git clone https://github.com/LiuAnclouds/pi05-ascend-robotics.git
@@ -98,19 +51,17 @@ cd pi05-ascend-robotics
 bash setup_docker.sh
 ```
 
-脚本生成 `pi05-ascend-robotics:cann8.5`，首次构建需要联网下载基础镜像和 Python 依赖，完成后显示 `Image ready`。已验证镜像约 **1.88 GB**；请另外预留模型、构建缓存和导出文件空间。镜像统一支持导出、编译和推理。
+镜像名为 `pi05-ascend-robotics:cann8.5`，约 **1.88 GB**。首次构建需联网；更新代码后重新执行构建脚本。当前提供 Dockerfile，由用户本地构建。
 
-无法连接 Docker Hub 时，可指定基础镜像代理重试，不需修改 Docker 系统配置：
+Docker Hub 无法访问时，可改用基础镜像代理：
 
 ```bash
 PI05_BASE_IMAGE=docker.m.daocloud.io/library/python:3.10-slim-bookworm bash setup_docker.sh
 ```
 
-也可直接使用 `docker build -t pi05-ascend-robotics:cann8.5 .`。代码更新后重新执行构建脚本；代码随镜像发布，权重和结果保存在镜像外。
+### 2. 准备模型
 
-## 3. 准备模型
-
-**Hugging Face 模型仓库尚未发布。** 当前需手动准备以下文件；仓库发布后，可使用下方下载命令。只有代码和 Docker 镜像不足以启动推理。
+**模型下载入口待发布。** 当前请将配套的模型文件放到以下位置：
 
 ```text
 models/paligemma-3b-pt-224/tokenizer.model
@@ -119,22 +70,18 @@ outputs/om/part1.om
 outputs/om/part2.om
 ```
 
-tokenizer、归一化统计和两个 OM 必须来自同一个模型发布版本。当前六关节输出为相对观测状态的增量，夹爪为绝对开度。仅推理不需要训练 checkpoint；自行导出时另准备 `models/weights/instrction_9.14_float32/model.safetensors`。
+这四个文件须来自同一模型版本。仅运行 OM 不需要训练 checkpoint，也无需配置 Conda。
 
-Hugging Face 发布时沿用上面的相对路径。下载命令中的 `HF_OWNER/HF_MODEL` 是占位符，需换成届时公布的仓库名；下载期间停止推理：
+### 3. 启动推理
 
-```bash
-docker run --rm -it --entrypoint python \
-  --mount "type=bind,src=$PWD,dst=/app" \
-  pi05-ascend-robotics:cann8.5 \
-  export/download_models.py --repo HF_OWNER/HF_MODEL
-```
+连接机械臂、CAN 和两路相机，确认默认相机对应关系：
 
-加 `--weights` 同时下载导出用 checkpoint，`--revision` 可指定模型版本。下载器固定同一次下载的仓库提交，全部下载成功后替换对应文件。此下载命令无需挂载 NPU，也无需宿主机 Python。
+| 参数 | 默认设备 | 视角 |
+| --- | --- | --- |
+| `--camera-a` | `/dev/video0` | 第三视角 |
+| `--camera-b` | `/dev/video2` | 腕部视角 |
 
-## 4. 连接设备并启动
-
-机械臂上电，连接 CAN 和两路相机，确认 `/dev/video0` 为第三视角、`/dev/video2` 为腕部视角。USB 重插后编号可能变化，可用 `--camera-a`、`--camera-b` 指定。
+USB 重插后编号可能变化。确认机械臂上电、物理急停解除且工作区域安全，在项目根目录执行：
 
 ```bash
 bash run_docker.sh python runtime/activate_can.py
@@ -144,97 +91,132 @@ bash run_docker.sh \
   --send-motion
 ```
 
-`--task` 必填。去掉 `--send-motion` 仅推理、不下发动作；加上它会启动机械臂控制，需确认工作区域和急停状态。默认 CAN 为 `can0`，去噪 **10 步**，每轮 **50 个动作点**，下发 **30 Hz**，机械臂速度 **15**。参数可分别用 `--steps`、`--action-fps`、`--motion-speed` 修改；`--iterations 0` 持续运行，程序不会自动判断抓取任务是否完成。
+`--task` 必填，填写任务指令；`--send-motion` 开启机械臂控制，省略则只推理、不下发动作。
 
-按 **Ctrl+C** 快速停止并保存报告。程序先准备设备，再加载模型、预热、推理；运行中急停、失能或故障会停止下发，物理急停需手动解除。相机持续采集最新帧；当前推理与完整轨迹下发依次执行，尚未实现 RTC/异步融合。
+默认每轮 **10 步去噪、50 个动作点、30 Hz 下发、速度 15**。程序持续运行，不自动判断任务完成；**按 Ctrl+C 快速停止并保存报告。**
 
-启动时若处于软件急停，程序先恢复并确认正常失能，再使能六关节、确认 CAN/MOVE_J 控制模式；各阶段按反馈确认，不用固定延时猜测恢复完成。若无故障但持续待机，只在启动阶段做一次失能/使能重试，过程会短暂卸载电机力矩。持续故障会报错退出。
+<details>
+<summary>修改运行参数</summary>
 
-所有输出保存在宿主机项目 `outputs/`，容器退出不会丢失。启动脚本自动只读挂载 CANN/驱动和模型、映射昇腾设备及相机、使用主机网络访问 CAN，不使用 `--privileged`。Docker 不替代宿主机的驱动和 CANN 安装。`PI05_IMAGE` 可覆盖镜像标签，`PI05_CANN_ROOT` 可覆盖宿主机 CANN 目录。
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--can` | `can0` | CAN 接口 |
+| `--steps` | `10` | 每轮去噪次数 |
+| `--action-fps` | `30` | 轨迹点下发频率，Hz |
+| `--motion-speed` | `15` | Piper 运动速度参数 |
+| `--iterations` | `0` | 0 表示持续运行，正整数指定推理轮数 |
+| `--output` | 自动按时间命名 | JSON 报告路径 |
 
-板端验证：真实 Piper 样本完整 10 步推理 **468.25 ms**，动作与宿主机逐值一致；小模型 PyTorch→ONNX→ATC→OM、两路相机/CAN 读取及 Ctrl+C 保存报告通过。此容器验证未下发机械臂动作，也未重新编译完整 π0.5 模型。
+参数直接追加到启动命令后。完整说明：`bash run_docker.sh --help`。
 
-## 导出和编译
+启动前自动完成设备准备；软件急停恢复会短暂失能，再使能进入控制模式。运行中触发急停或出现故障会停止下发，不自动恢复。
 
-权重应为训练完成的 OpenPI PyTorch checkpoint，其他路径可用 `--weights` 指定。准备真实样本 `data/sample.npz`：`image`（第三视角）和 `wrist_image`（腕部）为 HWC uint8 RGB 图像，`state[7]` 为六关节角度（度）和夹爪开度（毫米），`prompt` 为字符串：
+</details>
+
+## 模型导出
+
+已有 OM 可跳过本节。自行导出时，准备 OpenPI PyTorch 权重：
+
+```text
+models/weights/instrction_9.14_float32/model.safetensors
+```
+
+并准备真实样本 `data/sample.npz`：
+
+| 字段 | 格式 |
+| --- | --- |
+| `image` / `wrist_image` | 第三视角 / 腕部图像，HWC、uint8、RGB |
+| `state` | 7 维：六关节角度（度）＋夹爪开度（毫米） |
+| `prompt` | 样本对应的任务文本 |
+
+在项目根目录依次执行：
 
 ```bash
+# 准备输入
 bash run_docker.sh python export/prepare_input.py --sample data/sample.npz
 bash run_docker.sh python export/prepare_part2_input.py
+
+# 导出 ONNX
 bash run_docker.sh python export/export_part1.py
 bash run_docker.sh python export/export_part2.py
+
+# 编译 OM
 bash run_docker.sh python export/compile_om.py --part 1
 bash run_docker.sh python export/compile_om.py --part 2
 ```
 
-Part1 使用显式 Gemma 层图、opset 17；Part2 使用官方 action-expert 图、opset 14。导出保持模型的浮点策略：FP16 为主，Softmax/归一化/位置编码等敏感计算保留 FP32；mask、索引按算子要求使用 BOOL/INT32/INT64。ATC 使用 `Ascend310P1`、静态 ND 输入、`precision_mode_v2=origin`，Part1 选择 `high_performance_for_all`。这不是 INT8 量化，也不是全图 FP32。
+采用 **FP16 / FP32 混合精度**：FP16 为主，Softmax、归一化等敏感计算保留 FP32；ATC 使用 `origin` 保持图中精度。Part1 / Part2 分别使用 ONNX opset 17 / 14。
 
-导出在 CPU 上运行，需有足够内存和磁盘加载完整权重。Part1 ONNX 与同目录外部权重必须一起保留。已有 OM 不会被 `compile_om.py` 覆盖，请使用新的 `--output` 生成候选。历史 Part1 编译仍有 CumSum 未命中高优先级库的提示，不宣称所有算子已最优。
+导出在 CPU 上进行，需预留完整模型的内存与磁盘空间。可用 `--weights` 指定其他权重目录；已有 OM 不会被覆盖，用 `--output` 指定新文件。各入口均支持 `--help`。
 
-<details>
-<summary>可选：已有 Conda 环境的本机部署</summary>
+## 文件与日志
 
-不使用 Docker 时，先安装 Miniconda，再执行：
-
-```bash
-bash setup_env.sh
-source include/environment.sh
-python runtime/activate_can.py
-bash run_inference.sh --task "Pick up the blue cylindrical box and place it in the white square basket." --send-motion
+```text
+export/       输入准备、ONNX 导出、OM 编译
+runtime/      实机推理、相机与机械臂控制
+include/      公共定义与环境加载
+config/       归一化统计与基准数据
+openpi/       官方源码
+models/       权重与 tokenizer
+data/         原始样本与输入张量
+outputs/
+  onnx/       part1/part1.onnx、part2/part2.onnx 及外部权重
+  om/         part1.om、part2.om
+  runs/       Infer_report_<时间>/
 ```
 
-统一环境名为 `Pi05_ascend`；导出时直接执行相同 Python 入口。两种方式使用同一套模型和精度策略。
+每次运行单独保存 `result.json`（动作结果、关节状态、相机时间戳、耗时）和 `result.log`（运行诊断）。中断未完成的报告保留 `result.jsonl` 记录；不录制相机视频。
+
+模型、数据和输出保存在宿主机，不入 Git，容器退出不会丢失。导出与编译日志跟随对应模型保存；**ONNX 文件与其外部权重须一起保留。**
+
+## 驱动与 CANN 安装
+
+宿主机负责驱动、固件和 CANN，Docker 启动脚本自动挂载使用。已有正常环境无需重复安装。
+
+<details>
+<summary>首次装机：下载、安装与验证</summary>
+
+**① 板卡系统与驱动**
+
+从 [Orange Pi AI Station 官方支持页](http://www.orangepi.org/html/hardWare/computerAndMicrocontrollers/service-and-support/Orange-Pi-AI-Station.html) 获取对应板型的系统、驱动和固件，按厂商手册配套安装。
+
+本项目使用驱动 `7.6.T7.0.B056`（`npu-smi` 显示包版本 `26.0.t1`）。以下命令仅适用于对应的板卡专用安装包：
+
+```bash
+bash ./Ascend-hdk-310p-npu-driver_7.6.t7.0.b056_linux-aarch64_chip-enable-opiaistation-260825.run --full
+```
+
+按安装器提示和板卡手册完成固件配套、重启；`npu-smi info` 应显示 310P1 且 Health 为 OK。不要用通用服务器驱动替换板卡专用驱动。
+
+**② CANN Toolkit 与算子包**
+
+在 [昇腾官方下载页](https://www.hiascend.com/developer/download/community/result?module=cann) 选择 **8.5.0 / AArch64 / run**，下载 Toolkit 与 **310P** 算子包。系统依赖和版本配套见 [CANN 8.5.0 安装指南](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/850/softwareinst/instg/instg_0000.html)。在安装包目录执行：
+
+```bash
+bash ./Ascend-cann-toolkit_8.5.0_linux-aarch64.run \
+  --install --install-path=/usr/local/Ascend
+source /usr/local/Ascend/cann-8.5.0/set_env.sh
+bash ./Ascend-cann-310p-ops_8.5.0_linux-aarch64.run --install
+```
+
+安装参数指定父目录，版本目录自动生成为 `/usr/local/Ascend/cann-8.5.0`。不要混装其他版本或 A3、310B、910B 算子包；已有环境升级请遵循官方指南。
+
+**③ 验证安装**
+
+```bash
+source /usr/local/Ascend/cann-8.5.0/set_env.sh
+cat /usr/local/Ascend/cann-8.5.0/aarch64-linux/ascend_toolkit_install.info
+cat /usr/local/Ascend/cann-8.5.0/aarch64-linux/ascend_ops_install.info
+atc --help
+npu-smi info
+```
+
+确认 Toolkit 与 310P 算子包版本均为 `8.5.0`。若使用自定义安装目录，用 `PI05_CANN_ROOT` 指定包含 `set_env.sh` 的目录。其他芯片或 CANN 版本需重新编译验证 OM。
+
+完成后返回 [快速部署](#快速部署)，构建项目镜像。
 
 </details>
 
-## 实测结果
+---
 
-以下数据来自真实 Piper 记录样本和 Ascend310P1/CANN 8.5：
-
-| 指标 | 结果 | 口径 |
-| --- | ---: | --- |
-| Part1 OM | **259.96 ms** | 预热后 20 次平均，P95 260.60 ms |
-| Part2 OM | **21.86 ms/步** | 10 次单步测量 |
-| 完整 10 步推理 | **467.80 ms** | Part1 + 10 次 Part2，不含相机和运动 |
-| 完整动作 ONNX↔OM cosine | **0.999999894** | 相同输入、tokens、seed，最终 `[50,7]` 归一化动作 |
-| 完整动作 RMSE | **0.00028993** | 同一比较 |
-| Part1 reference↔ONNX cosine | **0.999968244** | KV cache，不是最终动作 |
-| Part1 reference↔OM cosine | **0.999992992** | KV cache，不是最终动作 |
-| Part2 FP16 reference↔OM cosine | **0.999999838** | 单步 velocity 输出 |
-
-这些是单样本数值一致性和耗时指标，不代表真实抓取成功率。完整动作基准是适配后的 ONNX，不能据此证明原始 JAX 训练处理链完全一致；KV 指标包含全张量。数据来源见 [`config/benchmark.json`](config/benchmark.json)。
-
-每次推理单独保存在 `outputs/runs/Infer_report_<时间>/`：`result.json` 保存完整动作、关节反馈、相机时间戳及分模块耗时，`result.log` 保存异常和 SDK 输出。运行中的 `result.jsonl` 实时落盘，最终报告保存成功后自动移除；突然断电时保留它用于排查。不录制相机视频。指定 `--output` 可自选报告位置，已有运行记录不会覆盖。
-
-## 目录
-
-```text
-export/       数据准备、ONNX 导出、OM 编译
-runtime/      相机、Piper、OM 推理和报告
-include/      公共路径、定义和环境加载
-config/       归一化统计与基准指标
-openpi/       已验证 OpenPI 源码快照
-models/       本地权重/tokenizer（不入 Git）
-data/         本地样本和处理张量（不入 Git）
-outputs/      ONNX/OM/运行报告（不入 Git）
-```
-
-所有生成结果只分三类，相关记录跟随对应文件保存：
-
-```text
-outputs/
-  onnx/
-    part1/    part1.onnx、外部权重、part1.export.json
-    part2/    part2.onnx、part2.export.json
-  om/         part1.om、part2.om，编译日志与验证结果
-  runs/
-    Infer_report_<时间>/    result.json、result.log
-```
-
-导出记录为 `part<N>.export.json`，编译记录为 `part<N>.compile.json/.log`，精度验证结果为 `part<N>.validation.json`。这些记录在执行对应步骤时生成。ONNX 和 OM 统一使用 `part1`、`part2` 命名；只保留一个正式 Part1 导出入口。
-
-`openpi/` 和 `runtime/acllite/` 的第三方来源及许可证见 [`THIRD_PARTY.md`](THIRD_PARTY.md)。CANN 默认 `/usr/local/Ascend/cann-8.5.0`，Conda 默认 `$HOME/miniconda3`，分别可用 `PI05_CANN_ROOT`、`PI05_CONDA_ROOT` 覆盖。入口均支持 `--help`。
-
-## 许可证
-
-项目代码采用 Apache-2.0；OpenPI、Ascend ACLLite、Piper SDK 和模型权重遵循各自许可证。
+项目代码采用 **Apache-2.0**。第三方代码和模型遵循各自许可，见 [THIRD_PARTY.md](THIRD_PARTY.md)。
