@@ -134,6 +134,7 @@ def main() -> int:
         """Persist control transitions and print only meaningful operator messages."""
         report.event(name, data)
         messages = {"startup_recovery": "Recovering startup stop/mode; motor torque may briefly drop.",
+                    "startup_enable_retry": "Standby did not accept CAN mode; disabling/re-enabling once.",
                     "motion_ready": "CAN_CTRL | NORMAL | MOVE_J | enabled 6/6 (stable feedback)"}
         if name in messages:
             status("Arm", messages[name], "ok" if name == "motion_ready" else "wait")

@@ -97,13 +97,15 @@ class MotionNotReady(RuntimeError):
                          f"error={feedback['error_code']}; driver_faults={feedback['driver_faults']}")
 
 
-def _validate_feedback(state: dict, startup: bool = False) -> None:
-    """Validate freshness/faults; startup alone may accept stop/teaching states."""
+def _validate_feedback(state: dict, startup: bool = False, recovering: bool = False) -> None:
+    """Validate feedback; only the reset wait allows its transient stop/comm status."""
     ages = [time.time() - state[key] for key in ("status_timestamp", "driver_timestamp")]
     if not all(0 <= age <= 1.0 for age in ages):
         raise MotionNotReady("Controller feedback is missing or older than 1 second", state)
     allowed = (0, 1, 11, 12, 13) if startup else (0,)
-    if state["arm_status"] not in allowed or state["error_code"] or any(state["driver_faults"]):
+    reset_transition = (recovering and state["arm_status"] in (1, 5)
+                        and state["error_code"] in (0, 63))
+    if (not reset_transition and (state["arm_status"] not in allowed or state["error_code"])) or any(state["driver_faults"]):
         raise MotionNotReady("Controller stopped or faulted; automatic fault reset is disabled", state)
     if (state["control_mode"] not in range(8) or state["move_mode"] not in range(6)
             or state["teach_status"] not in range(8)):
@@ -127,7 +129,7 @@ def require_motion_ready(piper) -> dict:
 
 
 def prepare_motion(piper, speed: int, *, on_event: Callable | None = None) -> dict:
-    """Switch to CAN/MOVE_J and require 0.5 seconds of fresh, stable feedback.
+    """Prepare the controller through acknowledged recovery, enable and mode stages.
 
     Args:
         piper: Connected Piper interface object.
@@ -135,17 +137,54 @@ def prepare_motion(piper, speed: int, *, on_event: Callable | None = None) -> di
         on_event: Optional callback accepting an event name and JSON-compatible data.
 
     Returns:
-        Before/after feedback and recovery details. Raises within six seconds
-        on faults or unsuccessful transition. No joint/gripper target is sent.
+        Before/after feedback and recovery details. Each transition has a
+        six-second limit. No joint/gripper target is sent.
 
-    The SDK's recovery opcode may temporarily remove motor torque. Normal
-    standby preparation only enables/selects mode; it never sends this opcode.
+    The SDK reset removes torque. Wait for normal, disabled feedback before
+    enabling again; a fixed sleep does not establish that reset has finished.
+    An unresponsive but fault-free standby gets one disable/enable retry.
     Call only during device setup, before allocating model resources.
     """
     initial = read_motion_status(piper)
     _validate_feedback(initial, startup=True)
     emit = on_event or (lambda name, data: None)
     emit("motion_prepare", {"feedback": initial})
+
+    def wait_for(phase, predicate, command=None, recovery=False, stable_for=0.2):
+        """Wait for fresh stable feedback, optionally retrying one transition command.
+
+        Reset alone may temporarily report emergency-stop or joint communication
+        status. No enable/mode/target command is issued during this recovery wait.
+        Persistent recovery errors time out and remain visible in the report.
+        """
+        started = time.perf_counter()
+        requested_at = time.time()
+        last_send, last_stamp, stable_since = -float("inf"), 0.0, None
+        emit("motion_stage_started", {"stage": phase})
+        while time.perf_counter() - started < 6.0:
+            state = read_motion_status(piper)
+            transient_reset = (recovery and state["arm_status"] in (1, 5)
+                               and state["error_code"] in (0, 63)
+                               and not any(state["driver_faults"]))
+            _validate_feedback(state, recovering=recovery)
+            stamp = min(state["status_timestamp"], state["driver_timestamp"])
+            now = time.perf_counter()
+            if not transient_reset and predicate(state) and stamp > requested_at:
+                if stamp > last_stamp:
+                    stable_since = now if stable_since is None else stable_since
+                    if now - stable_since >= stable_for:
+                        emit("motion_stage_ready", {"stage": phase, "feedback": state,
+                                                    "duration_ms": (now - started) * 1000.0})
+                        return state
+                    last_stamp = stamp
+            else:
+                stable_since = None
+                if command is not None and now - last_send >= 0.1:
+                    command()
+                    last_send = now
+            time.sleep(0.05)
+        raise MotionNotReady(f"Timed out during startup {phase}", state)
+
     teaching = (initial["control_mode"] in (2, 6) or initial["arm_status"] in (11, 12, 13)
                 or initial["teach_status"] != 0)
     if teaching or initial["control_mode"] == 7:
@@ -158,43 +197,30 @@ def prepare_motion(piper, speed: int, *, on_event: Callable | None = None) -> di
     if reset:
         emit("startup_recovery", {"note": "SDK reset may briefly remove motor torque"})
         piper.MotionCtrl_1(2, 0, 0)
-        # Do not immediately treat old enable flags as confirmation of reset.
-        time.sleep(0.5)
-    deadline = time.perf_counter() + 6.0
-    requested_at = time.time()
-    stable_since = None
-    last_stamp = 0.0
-    mode_sent = False
-    recovered = not reset
-    piper.EnablePiper()
-    time.sleep(0.05)
-    state = initial
-    while time.perf_counter() < deadline:
-        state = read_motion_status(piper)
-        _validate_feedback(state, startup=not recovered)
-        if state["arm_status"] == 0:
-            recovered = True
-        new_feedback = min(state["status_timestamp"], state["driver_timestamp"])
-        if _ready(state) and mode_sent and new_feedback > requested_at:
-            if new_feedback > last_stamp:
-                if stable_since is None:
-                    stable_since = time.perf_counter()
-                if time.perf_counter() - stable_since >= 0.5:
-                    result = {"before": initial, "after": state, "reset_requested": reset}
-                    emit("motion_ready", result)
-                    return result
-                last_stamp = new_feedback
-        else:
-            stable_since = None
-            if not all(state["enabled"]):
-                piper.EnablePiper()
-            elif new_feedback > requested_at:
-                piper.ModeCtrl(1, 1, max(1, min(100, speed)), 0)
-                if not mode_sent:
-                    requested_at = time.time()
-                    mode_sent = True
-        time.sleep(0.05)
-    raise MotionNotReady("Timed out waiting for stable CAN/MOVE_J and enabled joints", state)
+        wait_for("recovery_disabled", lambda state: not any(state["enabled"]), recovery=True,
+                 stable_for=0.5)
+    wait_for("enabled", lambda state: all(state["enabled"]), command=piper.EnablePiper)
+    mode = lambda: piper.ModeCtrl(1, 1, max(1, min(100, speed)), 0)
+    # Always send speed/mode once even if the previous session was already ready.
+    mode()
+    retried = False
+    try:
+        state = wait_for("can_mode", _ready, command=mode, stable_for=0.5)
+    except MotionNotReady as error:
+        state = error.feedback
+        _validate_feedback(state)
+        if state["control_mode"] != 0 or state["teach_status"] != 0 or not all(state["enabled"]):
+            raise
+        retried = True
+        emit("startup_enable_retry", {"reason": "Healthy enabled controller remained in standby",
+                                      "feedback": state})
+        wait_for("disabled", lambda state: not any(state["enabled"]), command=piper.DisablePiper)
+        wait_for("enabled", lambda state: all(state["enabled"]), command=piper.EnablePiper)
+        mode()
+        state = wait_for("can_mode_retry", _ready, command=mode, stable_for=0.5)
+    result = {"before": initial, "after": state, "reset_requested": reset, "enable_retry": retried}
+    emit("motion_ready", result)
+    return result
 
 
 def send_motion_chunk(
