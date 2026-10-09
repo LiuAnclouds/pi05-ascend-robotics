@@ -149,69 +149,6 @@ def require_motion_ready(piper) -> dict:
     return state
 
 
-def smooth_motion_trajectory(
-    trajectory: np.ndarray,
-    reference_state: np.ndarray,
-    current_state: np.ndarray,
-    *,
-    transition_points: int = 6,
-    max_joint_step: float = 1.2,
-) -> np.ndarray:
-    """Rebase and smooth a synchronous trajectory before sending it.
-
-    The policy predicts joint deltas relative to the state captured before
-    inference. During inference, the arm can move on the previous block, so
-    targets are rebased to the state read immediately before the first command.
-    A short smoothstep transition and per-point joint step limit remove the
-    discontinuity without changing the 50-point horizon or model outputs.
-
-    Args:
-        trajectory: Raw Piper trajectory shaped ``[N, 7]``. The first six
-            dimensions are joint degrees; dimension seven is gripper millimetres.
-        reference_state: State used by the policy to create ``trajectory``.
-        current_state: Fresh Piper state read just before sending.
-        transition_points: Number of points used for the initial transition.
-        max_joint_step: Maximum joint change in degrees between points.
-
-    Returns:
-        A finite float32 trajectory with the original shape. The gripper column
-        remains absolute and is not rebased or rate-limited.
-    """
-    result = np.asarray(trajectory, dtype=np.float32).copy()
-    reference = np.asarray(reference_state, dtype=np.float32).reshape(-1)
-    current = np.asarray(current_state, dtype=np.float32).reshape(-1)
-    if result.ndim != 2 or result.shape[1] != PIPER_STATE_DIM:
-        raise ValueError(f"invalid trajectory shape: {result.shape}")
-    if reference.shape[0] < 6 or current.shape[0] < 6:
-        raise ValueError("reference_state and current_state need six joints")
-    if not np.isfinite(result).all():
-        raise ValueError("trajectory contains nonfinite values")
-    if not np.isfinite(reference[:6]).all() or not np.isfinite(current[:6]).all():
-        raise ValueError("motion states contain nonfinite joint values")
-    if transition_points < 1 or max_joint_step <= 0:
-        raise ValueError("transition_points and max_joint_step must be positive")
-
-    # Keep the policy's relative trajectory, but anchor it at the latest state.
-    result[:, :6] += (current[:6] - reference[:6])[None, :]
-
-    count = min(int(transition_points), len(result))
-    if count > 1:
-        endpoint = result[count - 1, :6].copy()
-        if np.max(np.abs(result[0, :6] - current[:6])) > max_joint_step:
-            # Smoothstep gives zero slope at the start and end of the bridge.
-            for index in range(count):
-                u = float(index + 1) / float(count)
-                weight = u * u * (3.0 - 2.0 * u)
-                result[index, :6] = current[:6] + (endpoint - current[:6]) * weight
-
-    for index in range(1, len(result)):
-        delta = result[index, :6] - result[index - 1, :6]
-        result[index, :6] = result[index - 1, :6] + np.clip(
-            delta, -float(max_joint_step), float(max_joint_step)
-        )
-    return np.ascontiguousarray(result, dtype=np.float32)
-
-
 def prepare_motion(piper, speed: int, *, on_event: Callable | None = None) -> dict:
     """Prepare the controller through acknowledged recovery, enable and mode stages.
 
@@ -354,8 +291,7 @@ def send_motion_chunk(
         _validate_feedback(feedback)
         if not _ready(feedback):
             raise MotionNotReady("Controller mode or enable state changed during sending", feedback)
-        sample = {"point": index, **read_piper_feedback(piper),
-                  "target_raw": point.tolist(), "controller": feedback}
+        sample = {"point": index, **read_piper_feedback(piper), "controller": feedback}
         progress["feedback_samples"].append(sample)
         joints = np.rint(point[:6] * 1000.0).astype(np.int32)
         command_started = time.perf_counter()
