@@ -27,6 +27,7 @@ from include.runtime_defs import (
     DEFAULT_STATS, DEFAULT_TOKENIZER,
 )
 from runtime.input_data import load_saved_inputs
+from runtime.prompt import PromptController
 from runtime.piper import (
     connect_piper, parse_state, quick_stop, read_piper_state,
     send_motion_chunk, smooth_motion_trajectory, prepare_motion,
@@ -76,9 +77,9 @@ def parse_args() -> argparse.Namespace:
                           help="SocketCAN interface used to read Piper state.")
     hardware.add_argument("--send-motion", action="store_true",
                           help="Send predicted trajectory to Piper; omitted means shadow mode.")
-    hardware.add_argument("--motion-speed", type=int, default=15,
+    hardware.add_argument("--motion-speed", type=int, default=30,
                           help="Piper command speed when --send-motion is enabled.")
-    hardware.add_argument("--action-fps", type=float, default=30.0,
+    hardware.add_argument("--action-fps", type=float, default=50.0,
                           help="Trajectory command rate when --send-motion is enabled.")
 
     advanced = parser.add_argument_group(
@@ -99,12 +100,47 @@ def parse_args() -> argparse.Namespace:
                           help="Advanced: camera frames discarded before the first prediction.")
     advanced.add_argument("--seed", type=int, default=0,
                           help="Advanced: deterministic initial action-noise seed.")
+    advanced.add_argument("--joint-filter-alpha", type=float, default=0.5,
+                          help="Joint EMA weight in (0, 1]; 1 disables the low-pass filter.")
+    advanced.add_argument("--joint-reversal-deadband", type=float, default=0.05,
+                          help="Suppress smaller joint reversals in degrees; 0 disables the deadband.")
     args = parser.parse_args()
     if not args.task.strip():
         parser.error("--task must contain a non-empty task instruction")
     if not np.isfinite(args.action_fps) or args.action_fps <= 0:
         parser.error("--action-fps must be finite and positive")
+    if not np.isfinite(args.joint_filter_alpha) or not 0 < args.joint_filter_alpha <= 1:
+        parser.error("--joint-filter-alpha must be finite and in (0, 1]")
+    if not np.isfinite(args.joint_reversal_deadband) or args.joint_reversal_deadband < 0:
+        parser.error("--joint-reversal-deadband must be finite and nonnegative")
     return args
+
+
+def wait_for_task(controller, current_task: str, report, iteration: int) -> str:
+    """Wait for W at startup/task changes; return the approved task before observation.
+
+    The camera workers keep refreshing frames. No inference or target commands
+    are issued here. Ctrl+C propagates to normal stop and report cleanup.
+    """
+    waiting = False
+    while True:
+        report.check_writer()
+        requested_task, running = controller.poll_gate()
+        if requested_task is not None:
+            report.event("task_changed", {"previous_task": current_task,
+                                         "task": requested_task, "iteration": iteration})
+            current_task = requested_task
+            status("Task", current_task, "ok")
+        if running:
+            if waiting:
+                report.event("operator_continued", {"task": current_task, "iteration": iteration})
+                status("Control", "W received. Starting with a fresh observation.", "ok")
+            return current_task
+        if not waiting or requested_task is not None:
+            report.event("waiting_for_operator", {"task": current_task, "iteration": iteration})
+            status("Control", "Waiting for W. In terminal 2, enter W and press Enter.", "wait")
+        waiting = True
+        time.sleep(0.05)
 
 
 def main() -> int:
@@ -124,12 +160,14 @@ def main() -> int:
     status("Mode", f"{'MOTION' if args.send_motion else 'INFERENCE ONLY'} | {args.steps} denoising steps | 50 points | {args.action_fps:g} Hz | speed {args.motion_speed}")
     status("Report", str(args.output), "title")
     policy = cameras = piper = None
+    prompt_controller = None
+    current_task = args.task
     motion = args.send_motion
     iteration = completed = 0
     previous_last_command = None
     motion_requested = False
     outcome, failure = "completed", None
-    stage = "device_setup"
+    stage = "model_files"
 
     def motion_event(name, data):
         """Persist control transitions and print only meaningful operator messages."""
@@ -141,6 +179,11 @@ def main() -> int:
             status("Arm", messages[name], "ok" if name == "motion_ready" else "wait")
 
     try:
+        missing = [str(path) for path in (args.part1_om, args.part2_om, args.tokenizer, args.stats)
+                   if not path.is_file()]
+        if missing:
+            raise FileNotFoundError("Prepare the model bundle first. Missing: " + ", ".join(missing))
+        stage = "device_setup"
         section("1/4 | Device setup", "Connect cameras and prepare the arm before loading models.")
         report.event("stage_started", {"stage": stage})
         state = parse_state(args.state) if args.state and not args.send_motion else None
@@ -191,11 +234,17 @@ def main() -> int:
             wait_for_motion_ready(piper)
         stage = "inference"
         report.event("stage_started", {"stage": stage})
-        section("4/4 | Inference running", "Press Ctrl+C to stop. Full results are saved in the report journal.")
+        section("4/4 | Inference ready", "Press Ctrl+C to stop. Full results are saved in the report journal.")
+        if saved_inputs is None:
+            prompt_controller = PromptController()
+            status("Task switch", "Ready. In a second terminal: python3 runtime/set_prompt.py")
 
         while args.iterations == 0 or iteration < args.iterations:
             cycle_started = time.perf_counter()
             report.check_writer()
+            if prompt_controller is not None:
+                current_task = wait_for_task(prompt_controller, current_task, report, iteration)
+            cycle_started = time.perf_counter()
             capture_ms, camera_metadata = 0.0, None
             observation_at = timestamp()
             observation_started = time.perf_counter()
@@ -209,7 +258,7 @@ def main() -> int:
                 if piper is not None:
                     state = read_piper_state(piper)
                 inputs = policy.make_inputs(cv2.cvtColor(first, cv2.COLOR_BGR2RGB),
-                                            cv2.cvtColor(second, cv2.COLOR_BGR2RGB), state, args.task)
+                                            cv2.cvtColor(second, cv2.COLOR_BGR2RGB), state, current_task)
             inference_started_at = timestamp()
             started = time.perf_counter()
             # Reuse one diffusion noise seed for all synchronous control cycles.
@@ -224,7 +273,7 @@ def main() -> int:
                 "inference_started_at": inference_started_at, "inference_finished_at": timestamp(),
                 "seed": prediction_seed,
                 "mode": "saved_input" if saved_inputs is not None else ("live_motion" if motion else "live_shadow"),
-                "task": args.task, "action_shape": list(action_raw.shape),
+                "task": current_task, "action_shape": list(action_raw.shape),
                 "action_finite": bool(np.isfinite(action_raw).all()),
                 "action_space": "absolute_piper_targets" if action_target is not None else "joint_delta_gripper_absolute",
                 "piper_state_raw": state.tolist() if state is not None else None,
@@ -257,7 +306,9 @@ def main() -> int:
                     # first command continuous before sending any point.
                     send_state = read_piper_state(piper)
                     action_to_send = smooth_motion_trajectory(
-                        action_target[0], state, send_state
+                        action_target[0], state, send_state,
+                        filter_alpha=args.joint_filter_alpha,
+                        reversal_deadband_deg=args.joint_reversal_deadband,
                     )
                     rebased_raw = np.asarray(action_target[0], dtype=np.float32).copy()
                     rebased_raw[:, :6] += (send_state[:6] - state[:6])[None, :]
@@ -266,7 +317,9 @@ def main() -> int:
                     record["motion_state_raw"] = send_state.tolist()
                     record["action_sent"] = action_to_send.tolist()
                     record["smoothing"] = {
-                        "method": "rebase_smoothstep_step_limit",
+                        "method": "rebase_smoothstep_reversal_deadband_ema_step_limit",
+                        "joint_filter_alpha": args.joint_filter_alpha,
+                        "joint_reversal_deadband_deg": args.joint_reversal_deadband,
                         "transition_points": 6,
                         "max_joint_step_deg": 1.2,
                         "raw_rebased_first_jump_deg": float(
@@ -328,6 +381,8 @@ def main() -> int:
     finally:
         # Each cleanup runs even when another cleanup operation raises.
         cleanup = []
+        if prompt_controller is not None:
+            cleanup.append(("prompt_input_close", prompt_controller.close))
         if motion_requested and piper is not None:
             cleanup.append(("quick_stop", lambda: quick_stop(piper)))
         if cameras is not None:

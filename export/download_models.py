@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+import shutil
 import tempfile
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -35,8 +36,7 @@ def download_models(repo: str, revision: str, weights: bool = False) -> None:
     commit = HfApi().model_info(repo, revision=revision).sha
     files = (*RUNTIME_FILES, WEIGHTS_FILE) if weights else RUNTIME_FILES
     print(f"======== Model download | {repo} @ {commit} ========", flush=True)
-    # Stage on the destination filesystem, so large model files can be renamed
-    # without a second copy; failed downloads do not replace installed assets.
+    # Download the whole bundle before replacing any installed asset.
     with tempfile.TemporaryDirectory(prefix=".model-download-", dir=PROJECT_ROOT) as folder:
         for name in files:
             hf_hub_download(repo_id=repo, filename=name, revision=commit, local_dir=folder)
@@ -47,7 +47,22 @@ def download_models(repo: str, revision: str, weights: bool = False) -> None:
         for name in files:
             target = PROJECT_ROOT / name
             target.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(Path(folder) / name, target)
+            # models/config/outputs are separate Docker bind mounts. Atomic
+            # replacement must stage within the target's own filesystem.
+            with tempfile.NamedTemporaryFile(prefix=".download-", dir=target.parent, delete=False) as staged:
+                pending = Path(staged.name)
+                try:
+                    with (Path(folder) / name).open("rb") as source_file:
+                        shutil.copyfileobj(source_file, staged)
+                    staged.flush()
+                    os.fsync(staged.fileno())
+                except BaseException:
+                    pending.unlink(missing_ok=True)
+                    raise
+            try:
+                os.replace(pending, target)
+            finally:
+                pending.unlink(missing_ok=True)
             print(f"Saved: {name}", flush=True)
 
 

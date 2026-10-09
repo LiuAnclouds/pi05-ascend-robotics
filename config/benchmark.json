@@ -43,5 +43,17 @@
     "full_model_reexport": false
   },
   "runtime_cache": {"host_copy_mean_ms": 467.9187747009564, "device_cache_mean_ms": 354.19832969928393, "final_actions_exactly_equal": true, "changed_observation_cache_equal": true, "denoising_steps": 10, "trajectory_points": 50},
+  "release_validation": {
+    "date": "2026-10-10",
+    "input_sha256": "0aadb88ed4687fdacad1ee013d7c7f5ad1dc87d5066751a76996de89d384bde9",
+    "samples": 1,
+    "noise_seeds": [0, 1, 2],
+    "e2e_model_mean_ms": 353.8022289964526,
+    "old_new_actions_exactly_equal": true,
+    "max_abs_difference": 0.0,
+    "all_finite": true,
+    "motion_sent": false,
+    "full_model_reexport": false
+  },
   "notes": "Historical reports retained in board release backup. Full-action reference is the adapted ONNX, not original JAX; does not validate original training transforms. Numerical agreement is not task success rate. All timing scopes exclude physical trajectory execution. Runtime measurements use saved real input and no CAN motion."
 }

@@ -11,6 +11,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from runtime.preprocessing import encode_task_state
 
 ATTENTION_MASK_VALUE = -2.3819763e38
 
@@ -119,23 +120,7 @@ class OfficialOMPolicy:
         Returns:
             ``(tokens, token_mask)`` arrays shaped ``[1, 200]``.
         """
-        state = np.asarray(state, dtype=np.float32).reshape(-1)
-        if state.shape != (7,):
-            raise ValueError(f"expected seven Piper state values, got {state.shape}")
-        normalized = np.clip(
-            2.0 * (state - self.state_q01) / np.maximum(self.state_q99 - self.state_q01, 1e-8) - 1.0,
-            -1.0,
-            1.0,
-        )
-        discrete = np.digitize(normalized, np.linspace(-1.0, 1.0, 257)[:-1]).astype(np.int64) - 1
-        clean_task = str(task).strip().replace("_", " ").replace("\n", " ")
-        text = f"Task: {clean_task}, State: {' '.join(map(str, discrete))};\nAction: "
-        ids = list(self.tokenizer.encode(text, add_bos=True))[:200]
-        tokens = np.zeros((1, 200), dtype=np.int64)
-        token_mask = np.zeros((1, 200), dtype=np.bool_)
-        tokens[0, : len(ids)] = np.asarray(ids, dtype=np.int64)
-        token_mask[0, : len(ids)] = True
-        return tokens, token_mask
+        return encode_task_state(self.tokenizer, task, state, self.state_q01, self.state_q99)
 
     def make_inputs(self, third_person: np.ndarray, wrist: np.ndarray, state: np.ndarray, task: str) -> list[np.ndarray]:
         """Prepare camera frames and Piper state as Part1 OM inputs.

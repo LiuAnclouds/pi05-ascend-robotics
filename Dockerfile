@@ -11,7 +11,7 @@ ENV PYTHONUNBUFFERED=1 \
     TZ=Asia/Shanghai
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates gcc g++ make iproute2 procps tini \
+        ca-certificates gcc g++ make iproute2 procps tini tzdata \
         libgomp1 libglib2.0-0 libnuma1 libusb-1.0-0 \
     && rm -rf /var/lib/apt/lists/*
 

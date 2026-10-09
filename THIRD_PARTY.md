@@ -8,7 +8,7 @@
   `openpi/LICENSE_GEMMA.txt`.
 - `runtime/acllite/` comes from Ascend open-source samples. Its Apache-2.0
   license is included as `runtime/acllite/LICENSE`.
-- `setup_env.sh` installs the OpenPI transformer replacements and extends their
+- `include/install_transformers.py`, run by Dockerfile, installs the OpenPI transformer replacements and extends their
   version check to Transformers 4.53.3, matching the verified board environment.
   The checked-in OpenPI source is not modified during installation.
 - Model weights and tokenizer files are external deployment assets and are not

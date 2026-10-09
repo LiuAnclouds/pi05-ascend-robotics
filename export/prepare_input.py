@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from include.project_paths import DEFAULT_PART1_INPUT, DEFAULT_STATS, DEFAULT_TOKENIZER
+from runtime.preprocessing import encode_task_state
 
 
 def resize_with_pad(image, size=224):
@@ -73,14 +74,9 @@ def main() -> None:
     state_norm = np.clip(2.0 * (state - q01) / np.maximum(q99 - q01, 1e-8) - 1.0, -1.0, 1.0)
 
     prompt = str(sample["prompt"].item()).strip().replace("_", " ").replace("\n", " ")
-    discrete = np.digitize(state_norm, np.linspace(-1.0, 1.0, 257)[:-1]).astype(np.int64) - 1
-    text = f"Task: {prompt}, State: {' '.join(map(str, discrete))};\nAction: "
     sp = sentencepiece.SentencePieceProcessor(model_file=str(args.tokenizer))
-    ids = list(sp.encode(text, add_bos=True))[:200]
-    tokens = torch.zeros((1, 200), dtype=torch.long)
-    token_mask = torch.zeros((1, 200), dtype=torch.bool)
-    tokens[0, : len(ids)] = torch.tensor(ids, dtype=torch.long)
-    token_mask[0, : len(ids)] = True
+    tokens, token_mask = encode_task_state(sp, prompt, state, q01, q99)
+    tokens, token_mask = torch.from_numpy(tokens), torch.from_numpy(token_mask)
 
     image0 = resize_with_pad(np.asarray(sample["image"], dtype=np.uint8))
     image1 = resize_with_pad(np.asarray(sample["wrist_image"], dtype=np.uint8))
@@ -103,7 +99,7 @@ def main() -> None:
         },
         args.output,
     )
-    print(json.dumps({"output": str(args.output), "prompt": prompt, "token_count": len(ids)}, ensure_ascii=False))
+    print(json.dumps({"output": str(args.output), "prompt": prompt, "token_count": int(token_mask.sum())}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

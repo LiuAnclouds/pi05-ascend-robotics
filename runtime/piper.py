@@ -185,6 +185,8 @@ def smooth_motion_trajectory(
     *,
     transition_points: int = 6,
     max_joint_step: float = 1.2,
+    filter_alpha: float = 0.5,
+    reversal_deadband_deg: float = 0.05,
 ) -> np.ndarray:
     """Rebase and smooth a synchronous trajectory before sending it.
 
@@ -201,6 +203,9 @@ def smooth_motion_trajectory(
         current_state: Fresh Piper state read just before sending.
         transition_points: Number of points used for the initial transition.
         max_joint_step: Maximum joint change in degrees between points.
+        filter_alpha: Joint EMA weight in (0, 1]; 1 disables low-pass filtering.
+        reversal_deadband_deg: Suppress only smaller reversals in joint degrees;
+            0 disables the deadband. Gripper commands are never filtered.
 
     Returns:
         A finite float32 trajectory with the original shape. The gripper column
@@ -219,6 +224,10 @@ def smooth_motion_trajectory(
         raise ValueError("motion states contain nonfinite joint values")
     if transition_points < 1 or max_joint_step <= 0:
         raise ValueError("transition_points and max_joint_step must be positive")
+    if not np.isfinite(filter_alpha) or not 0 < filter_alpha <= 1:
+        raise ValueError("filter_alpha must be finite and in (0, 1]")
+    if not np.isfinite(reversal_deadband_deg) or reversal_deadband_deg < 0:
+        raise ValueError("reversal_deadband_deg must be finite and nonnegative")
 
     # Keep the policy's relative trajectory, but anchor it at the latest state.
     result[:, :6] += (current[:6] - reference[:6])[None, :]
@@ -232,6 +241,18 @@ def smooth_motion_trajectory(
                 u = float(index + 1) / float(count)
                 weight = u * u * (3.0 - 2.0 * u)
                 result[index, :6] = current[:6] + (endpoint - current[:6]) * weight
+
+    if filter_alpha < 1 or reversal_deadband_deg > 0:
+        previous = current[:6].copy()
+        direction = np.zeros(6, dtype=np.float32)
+        for index in range(len(result)):
+            delta = result[index, :6] - previous
+            reverse = (delta * direction < 0) & (np.abs(delta) < reversal_deadband_deg)
+            delta[reverse] = 0.0
+            step = np.clip(filter_alpha * delta, -max_joint_step, max_joint_step)
+            previous = previous + step
+            direction = np.where(step != 0, np.sign(step), direction)
+            result[index, :6] = previous
 
     for index in range(1, len(result)):
         delta = result[index, :6] - result[index - 1, :6]
@@ -310,7 +331,9 @@ def prepare_motion(piper, speed: int, *, on_event: Callable | None = None) -> di
     if reset:
         emit("startup_recovery", {"note": "SDK reset may briefly remove motor torque"})
         piper.MotionCtrl_1(2, 0, 0)
-        wait_for("recovery_disabled", lambda state: not any(state["enabled"]), recovery=True,
+        piper.DisablePiper()
+        wait_for("recovery_disabled", lambda state: not any(state["enabled"]),
+                 command=piper.DisablePiper, recovery=True,
                  stable_for=0.5)
     wait_for("enabled", lambda state: all(state["enabled"]), command=piper.EnablePiper)
     mode = lambda: piper.ModeCtrl(1, 1, max(1, min(100, speed)), 0)

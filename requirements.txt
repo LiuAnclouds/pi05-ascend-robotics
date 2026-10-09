@@ -13,8 +13,9 @@ transformers==4.53.3
 safetensors==0.8.0
 onnx==1.23.1
 onnxruntime==1.23.2
-coloredlogs
-flatbuffers
+coloredlogs==15.0.1
+flatbuffers==25.12.19
+huggingface-hub==0.36.2
 # OpenPI configuration imports these even for the PyTorch export path.
 jax==0.5.3
 jaxlib==0.5.3
