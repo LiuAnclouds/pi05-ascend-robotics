@@ -111,6 +111,48 @@ class RuntimeTests(unittest.TestCase):
             self.assertFalse(report._writer.is_alive())
             self.assertTrue(path.with_suffix('.jsonl').exists())
 
+    def test_cleanup_event_waits_for_queue_without_losing_records(self):
+        """Shutdown backpressure preserves all events and interrupted status."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'result.json'
+            report = RunReport(path, {})
+            report._queue.join()
+            entered, release, submitted = threading.Event(), threading.Event(), threading.Event()
+            errors = []
+
+            def blocked_fsync(_fd):
+                entered.set()
+                release.wait(5)
+
+            def submit_cleanup():
+                try:
+                    report.event('quick_stop', {'result': 'request_sent'}, wait=True)
+                except Exception as error:
+                    errors.append(error)
+                finally:
+                    submitted.set()
+
+            with patch('runtime.report.os.fsync', side_effect=blocked_fsync):
+                report.event('test', {})
+                self.assertTrue(entered.wait(1))
+                for index in range(8):
+                    report.event('test', {'index': index})
+                worker = threading.Thread(target=submit_cleanup)
+                worker.start()
+                try:
+                    self.assertFalse(submitted.wait(0.15))
+                finally:
+                    release.set()
+                    worker.join(2)
+                    report._queue.join()
+            self.assertTrue(submitted.is_set())
+            self.assertEqual(errors, [])
+            report.finish('interrupted', {})
+            saved = json.loads(path.read_text())
+            self.assertEqual(saved['status'], 'interrupted')
+            self.assertEqual(len(saved['events']), 10)
+            self.assertEqual(saved['events'][-1]['event'], 'quick_stop')
+
     def test_all_fifty_targets_unchanged(self):
         """The sender must emit all 50 points in order, including the gripper."""
         piper = FakePiper()

@@ -303,17 +303,24 @@ def main() -> int:
             cleanup.append(("can_disconnect", piper.DisconnectPort))
         if policy is not None:
             cleanup.append(("model_close", policy.close))
+        cleanup_events = []
         for name, operation in cleanup:
             try:
                 with report.diagnostics():
                     operation()
-                report.event(name, {"result": "request_sent" if name == "quick_stop" else "finished"})
+                cleanup_events.append((name, {"result": "request_sent" if name == "quick_stop" else "finished"}))
             except Exception as error:
                 outcome, failure = "failed", failure or f"{name}: {error}"
                 status("Cleanup", f"{name}: {error}", "error")
+                cleanup_events.append(("cleanup_error", {"operation": name, "error": str(error)}))
         try:
-            report.finish(outcome, {"predictions": iteration, "completed_rounds": completed,
-                                    "last_stage": stage, "error": failure})
+            # Stop and release every device before waiting for report storage.
+            try:
+                for name, data in cleanup_events:
+                    report.event(name, data, wait=True)
+            finally:
+                report.finish(outcome, {"predictions": iteration, "completed_rounds": completed,
+                                        "last_stage": stage, "error": failure})
         except Exception as error:
             outcome = "failed"
             status("Report", f"Finalization failed; preserve journal: {error}", "error")

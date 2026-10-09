@@ -82,10 +82,11 @@ class RunReport:
                                          "note": "Live predictions and control events are in the JSONL journal."}) + "\n",
                              encoding="utf-8")
 
-    def event(self, name: str, data: dict) -> None:
+    def event(self, name: str, data: dict, *, wait: bool = False) -> None:
         """Snapshot an event into a bounded queue; return before serialization/fsync.
 
         Args: name identifies the event; data is JSON-compatible mutable data.
+        wait allows queue backpressure after hardware cleanup, never in control.
         Later caller mutations cannot change the queued snapshot. Queue/write
         failures raise RuntimeError so control can stop and preserve evidence.
         """
@@ -93,6 +94,14 @@ class RunReport:
         if self._closed:
             raise RuntimeError("Report writer is closed")
         item = _json_value({"event": name, "timestamp": timestamp(), "data": data})
+        if wait:
+            while True:
+                self.check_writer()
+                try:
+                    self._queue.put(item, timeout=0.1)
+                    return
+                except queue.Full:
+                    continue
         try:
             self._queue.put_nowait(item)
         except queue.Full as error:
