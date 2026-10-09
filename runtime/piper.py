@@ -149,6 +149,35 @@ def require_motion_ready(piper) -> dict:
     return state
 
 
+def wait_for_motion_ready(piper, timeout: float = 2.0) -> dict:
+    """Wait briefly for current, ready controller feedback without sending commands.
+
+    Args:
+        piper: Connected Piper interface object.
+        timeout: Maximum wait for the SDK receiver to publish a fresh status.
+
+    Returns:
+        The first current feedback snapshot in CAN/MOVE_J control.
+
+    Raises:
+        MotionNotReady: Feedback timed out, or fresh feedback is not ready.
+    """
+    deadline = time.monotonic() + timeout
+    requested_at = time.time()
+    while True:
+        state = read_motion_status(piper)
+        if min(state["status_timestamp"], state["driver_timestamp"]) > requested_at:
+            _validate_feedback(state)
+            if not _ready(state):
+                raise MotionNotReady("Controller mode or enable state changed", state)
+            return state
+        if time.monotonic() >= deadline:
+            raise MotionNotReady(
+                f"No new controller/driver feedback within {timeout:g} seconds", state
+            )
+        time.sleep(0.02)
+
+
 def prepare_motion(piper, speed: int, *, on_event: Callable | None = None) -> dict:
     """Prepare the controller through acknowledged recovery, enable and mode stages.
 

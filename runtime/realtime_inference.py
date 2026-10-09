@@ -29,7 +29,7 @@ from include.runtime_defs import (
 from runtime.input_data import load_saved_inputs
 from runtime.piper import (
     connect_piper, parse_state, quick_stop, read_piper_state,
-    send_motion_chunk, prepare_motion, require_motion_ready, MotionNotReady,
+    send_motion_chunk, prepare_motion, wait_for_motion_ready, MotionNotReady,
 )
 from runtime.report import RunReport, timestamp
 from include.project_paths import DEFAULT_RUN_DIR
@@ -183,11 +183,11 @@ def main() -> int:
             raise RuntimeError("Model warm-up produced nonfinite actions")
         report.event("warmup_finished", {"duration_ms": (time.perf_counter() - warmup_started) * 1000.0})
         del warmup_inputs, warmup_result
-        # Loading can take tens of seconds. Check once that the startup state
-        # still holds, but never reset/re-enable here or inside the action loop.
+        # Model loading can outlast SDK feedback. Wait only for a fresh ready
+        # status; this neither changes the controller mode nor enables motors.
         stage = "before_inference"
         if motion:
-            require_motion_ready(piper)
+            wait_for_motion_ready(piper)
         stage = "inference"
         report.event("stage_started", {"stage": stage})
         section("4/4 | Inference running", "Press Ctrl+C to stop. Full results are saved in the report journal.")
