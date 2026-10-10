@@ -124,18 +124,23 @@ bash run_docker.sh python export/compile_om.py --part 2
 | --- | --- |
 | Part1 / Part2 | 视觉语言编码及 KV cache / Action Expert 去噪；opset 17 / 14 |
 | 精度 | FP16 主计算，Softmax、归一化等敏感路径保留 FP32 |
-| 算子适配 | BOOL 累积转 INT32、显式 attention 和旋转位置编码适配 |
+| 算子适配 | causal mask 累积使用 INT32、position IDs 累积保留 INT64；显式 attention 和旋转位置编码适配 |
 | ATC | `Ascend310P1`、静态 ND、`precision_mode_v2=origin`；Part1 优先高性能实现 |
 
 ## 性能与精度
 
-Ascend310P1 / CANN 8.5.0，配套真实 Piper 样本的历史验证结果：
+Ascend310P1 / CANN 8.5.0，10 次去噪，每次输出 50 个动作点。
 
-| Part1 | Part2 每步 | 完整 10 步推理 | ONNX → OM Cosine | RMSE |
-| ---: | ---: | ---: | ---: | ---: |
-| 229.7 ms | 12.21 ms | 354.2 ms | 0.999999894 | 0.00028993 |
+| 指标 | 香橙派 | NVIDIA Orin |
+| --- | ---: | --- |
+| 部署精度 | FP16 + 部分 FP32 | 待测试 |
+| 模型平均耗时（固定真实输入，30 次） | 358.08 ms | 待测试 |
+| 实机模型平均耗时（571 个完整块） | 389.91 ms | 待测试 |
+| 每 50 点整轮耗时（25 Hz / speed 10） | 2427.31 ms | 待测试 |
+| ONNX → OM 最终动作 Cosine / RMSE | 0.999999894 / 0.00028993 | 待测试 |
+| 加载及预热后的设备 DDR 增量 | 6.508 GiB | 待测试 |
 
-耗时不含相机和运动；比较最终归一化动作，不代表抓取成功率。[指标记录](config/benchmark.json)。
+精度来自单个真实样本；模型耗时不含运动，整轮包含 50 点下发。DDR 为设备全局增量，非进程独占显存；以上指标不代表抓取成功率。
 
 ## 文件与报告
 
