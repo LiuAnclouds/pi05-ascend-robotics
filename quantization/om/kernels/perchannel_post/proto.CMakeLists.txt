@@ -1,0 +1,7 @@
+aux_source_directory(. SRCS)
+set(LIBRARY_OUTPUT_PATH ${OP_PROTO_TARGET_OUT_DIR})
+add_library(${OP_PROTO_TARGET} SHARED ${SRCS})
+target_link_libraries(${OP_PROTO_TARGET}
+    ${ASCEND_INC}/../lib64/libgraph.so
+    ${ASCEND_INC}/../lib64/libgraph_base.so
+    ${ASCEND_INC}/../lib64/libregister.so)

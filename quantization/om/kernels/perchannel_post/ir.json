@@ -1,0 +1,15 @@
+[
+  {
+    "op": "Pi05PerchannelPost",
+    "input_desc": [
+      {"name": "c", "param_type": "required", "format": ["FRACTAL_NZ"], "type": ["int32"]},
+      {"name": "row_sum", "param_type": "required", "format": ["ND"], "type": ["float"]},
+      {"name": "weight_zero", "param_type": "required", "format": ["ND"], "type": ["float"]},
+      {"name": "weight_scale", "param_type": "required", "format": ["ND"], "type": ["float"]},
+      {"name": "activation_scale", "param_type": "required", "format": ["ND"], "type": ["float"]}
+    ],
+    "output_desc": [
+      {"name": "y", "param_type": "required", "format": ["ND"], "type": ["fp16"]}
+    ]
+  }
+]

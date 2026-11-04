@@ -1,5 +1,7 @@
 # Generated model assets, observations and logs stay on the deployment host.
-/models/
+/config/models/**/*.om
+/config/models/**/*.safetensors
+/config/models/tokenizer.model
 /data/
 /outputs/
 /checkpoint/
@@ -15,6 +17,14 @@ __pycache__/
 .model-download-*/
 .DS_Store
 # Upstream development metadata is not part of this deployment distribution.
-/openpi/.github/
-/openpi/.vscode/
-/openpi/.gitmodules
+/third_party/openpi/.github/
+/third_party/openpi/.vscode/
+/third_party/openpi/.gitmodules
+.ruff_cache/
+.build/
+*.egg-info/
+*.orig
+.before*/
+check_result.json
+fusion_result.json
+/PROJECT_STATUS.md

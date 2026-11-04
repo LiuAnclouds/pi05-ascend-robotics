@@ -1,0 +1,26 @@
+name: pi05_humble
+channels:
+  - robostack-humble
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11
+  - numpy=1.26.4
+  - ros-humble-ros-base
+  - ros-humble-rclpy=3.3.16
+  - ros-humble-rosidl-default-generators
+  - colcon-common-extensions
+  - cmake
+  - make
+  - ninja
+  - pkg-config
+  - pip
+  - pip:
+      - setuptools==69.5.1
+      - empy==3.3.4
+      - opencv-python-headless==4.11.0.86
+      - pillow==12.3.0
+      - sentencepiece==0.2.2
+      - PyYAML==6.0.3
+      - python-can==4.6.1
+      - piper_sdk==0.6.2

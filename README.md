@@ -1,173 +1,152 @@
-# π0.5 · Ascend Robotics
+# Pi0.5 Ascend Robotics
 
-![Orange Pi](https://img.shields.io/badge/Orange_Pi-AI_Station-F58220)
-![Ascend](https://img.shields.io/badge/Ascend-310P1-D71920)
-![CANN](https://img.shields.io/badge/CANN-8.5.0-D71920)
-![Docker](https://img.shields.io/badge/Docker-ARM64-2496ED?logo=docker&logoColor=white)
-![Python](https://img.shields.io/badge/Python-3.10-3776AB)
-![License](https://img.shields.io/badge/License-Apache_2.0-green)
+基于 Ascend 310P1 的 pi0.5 量化与机械臂部署工程，提供模型导出、昇腾离线模型（OM）执行，以及 ROS2 双摄观测、任务输入和 Piper 控制。
 
-将 [OpenPI π0.5](https://github.com/Physical-Intelligence/openpi) 部署到 Orange Pi AI Station，通过双路相机和语言指令控制 Piper 机械臂。支持 PyTorch → ONNX → OM 导出，编译与推理共用一个 Docker 环境，无需 Conda。
+## 一、部署方案与量化结果
 
-**适用设备：** Ascend310P1 / ARM64、openEuler 22.03 LTS-SP3、Piper + USB-CAN、两路 USB 相机。模型须使用对应 Piper 数据微调。
+视觉与语言采用 W8A8，动作专家采用 W16A16，记为 **ACT-W16A16**。W 表示权重精度，A 表示激活精度，数字表示位数。八位计算用于线性层；注意力矩阵、归一化等运算保留对应的浮点精度。
 
-## 1. 安装环境
+| 模块 | 权重 | 激活 | 推理耗时 |
+|---|---|---|---:|
+| 视觉与语言 | INT8 | 动态 INT8 | 106.112 ms |
+| 动作专家，十步去噪 | FP16 | FP16 | 80.545 ms |
+| 完整推理 | — | — | **189.967 ms** |
 
-以下命令均在板端以 root 执行。已有环境可跳过对应安装步骤。
+完整推理包含模型输入输出传输和去噪更新，不含加载、图像预处理和机械臂执行。以上是双摄 224 × 224、64 个文本词元、50 点动作块的已验证测试数据。
 
-### 驱动与 CANN（宿主机）
+| 指标 | ACT-W16A16 |
+|---|---:|
+| 全模型参数中 W8 占比 | **63.44%** |
+| 线性层权重中 W8 占比 | **84.22%** |
+| 矩阵运算输入激活中 A8 占比 | **62.34%** |
+| 相对浮点参考的平均余弦相似度 | **99.7938%** |
+| 夹爪平均绝对偏差 | **1.214 mm** |
+| 夹爪 P95 偏差 | **2.051 mm** |
 
-从 [Orange Pi 官方支持页](http://www.orangepi.org/html/hardWare/computerAndMicrocontrollers/service-and-support/Orange-Pi-AI-Station.html) 安装板卡配套系统、驱动及固件，按手册重启。已验证驱动版本为 `7.6.T7.0.B056`。执行 `npu-smi info`，确认设备为 310P1、Health 为 OK。
+同平台全模块八位方案（FULL-W8A8）为 197.444 ms。保留动作专家 FP16 后，完整推理耗时减少 **3.79%**。与 Orin 最快的实测配置相比，310P 耗时减少 **66.43%**。测试条件、完整误差与方案分析见[量化结果](docs/quantization.md)。
 
-从 [昇腾下载页](https://www.hiascend.com/developer/download/community/result?module=cann) 下载 **8.5.0 / AArch64 的 Toolkit 和 310P 算子包**，在安装包目录执行：
+## 二、运行环境
+
+| 项目 | 板端配置 |
+|---|---|
+| 硬件 | 香橙派，Ascend 310P1，ARM64 |
+| 系统 | openEuler 22.03 LTS-SP3，Linux 5.10.0+ |
+| 昇腾软件 | CANN 8.5.0；驱动包 26.0.t1 |
+| ROS2 | Humble，RoboStack ARM64 发行版 |
+| 推理环境 | `pi05_humble`，Python 3.11.17，NumPy 1.26.4 |
+| 导出环境 | `Pi05_ascend`，Python 3.10.21，PyTorch 2.5.1 |
+| 机械臂 | Piper SDK 0.6.2，python-can 4.6.1 |
+
+完整环境创建与首次构建步骤见[环境配置](docs/environment.md)。推理与导出使用独立环境，CANN 和设备驱动由目标板系统提供。
+
+## 三、安装与启动
+
+### 1. 获取源码与模型
 
 ```bash
-bash ./Ascend-cann-toolkit_8.5.0_linux-aarch64.run --install --install-path=/usr/local/Ascend
-source /usr/local/Ascend/cann-8.5.0/set_env.sh
-bash ./Ascend-cann-310p-ops_8.5.0_linux-aarch64.run --install
-atc --help
-npu-smi info
-```
-
-系统依赖和驱动配套要求见 [CANN 8.5 安装指南](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/850/softwareinst/instg/instg_0000.html)。Docker 复用宿主机驱动与 CANN，不替代这一步。
-
-### 构建项目镜像
-
-```bash
-dnf install -y git docker-engine python3
-systemctl enable --now docker
 git clone https://github.com/LiuAnclouds/pi05-ascend-robotics.git
 cd pi05-ascend-robotics
-bash setup_docker.sh
 ```
 
-看到 `Image ready` 即构建完成。镜像安装 Python 3.10、PyTorch、ONNX/ORT、Piper SDK 和编译依赖，版本见 [requirements.txt](requirements.txt)。首次构建需联网；更新代码后重新执行构建命令。
+将配套模型放到以下位置。模型权重与 OM 文件单独分发。
 
-若 Docker Hub 无法访问，可使用可达的基础镜像源：
+| 资源 | 路径 |
+|---|---|
+| 视觉语言 OM | `config/models/om/part1.om` |
+| 串行动作 OM，含 FP16 去噪更新输出 | `config/models/om/part2.om` |
+| 分词器 | `config/models/tokenizer.model` |
+| 归一化统计 | `config/norm_stats.json` |
+| RTC 配套资源，使用 RTC 时提供 | `config/models/rtc/` |
+
+当前串行执行使用设备上的 FP16 去噪更新。`part2.om` 需要同时输出动作速度和下一步动作状态；[模型导出](docs/quantization.md#四模型导出)给出生成方法。
+
+### 2. 首次构建
+
+先按[环境配置](docs/environment.md)创建 `pi05_humble`。在项目根目录执行：
 
 ```bash
-PI05_BASE_IMAGE=docker.m.daocloud.io/library/python:3.10-slim-bookworm bash setup_docker.sh
+source /usr/local/Ascend/ascend-toolkit/latest/set_env.sh
+conda activate pi05_humble
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+python -m pip install --no-deps -e .
+colcon --log-base outputs/ros2/log build \
+  --build-base outputs/ros2/build \
+  --install-base outputs/ros2/install \
+  --base-paths inference/ros2 inference/ros2_interfaces \
+  --symlink-install
 ```
 
-## 2. 准备模型
+`outputs/ros2/` 保存 ROS2 构建与安装产物。`--symlink-install` 让安装结果引用源码，日常修改 Python 文件后可直接使用；更改消息定义和入口配置后需要重新构建。
 
-**模型下载仓库尚未发布，目前需自行准备下面四个配套文件。仅克隆代码不能开始推理。**
+### 3. 启动推理
 
-| 文件 | 放置位置（相对项目根目录） |
-| --- | --- |
-| Part1 OM | `outputs/om/part1.om` |
-| Part2 OM | `outputs/om/part2.om` |
-| Tokenizer | `models/paligemma-3b-pt-224/tokenizer.model` |
-| 训练归一化参数 | `config/norm_stats.json` |
-
-已有 `norm_stats.json` 只适用于配套模型，不要与其他权重混用。模型发布后可用 `bash run_docker.sh python export/download_models.py --repo OWNER/REPO` 下载完整包，`OWNER/REPO` 替换为发布地址。
-
-## 3. 启动 Piper
-
-连接相机和 USB-CAN，给机械臂上电、解除物理急停，保持工作区域无遮挡。以下命令均在项目根目录执行。
-
-**终端一：初始化 CAN，启动推理。**
+每个新终端先加载环境，并进入项目根目录：
 
 ```bash
-bash run_docker.sh python runtime/activate_can.py
-bash run_docker.sh \
-  --task "Pick up the blue cylindrical box and place it in the white square basket." \
-  --send-motion --action-fps 20 --motion-speed 10
+source /usr/local/Ascend/ascend-toolkit/latest/set_env.sh
+conda activate pi05_humble
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+source outputs/ros2/install/setup.bash
+ros2 launch pi05_inference inference.launch.py
 ```
 
-CAN 默认 `can0`、1 Mbps。启动依次完成设备准备、模型加载、一次丢弃结果的预热，然后显示 `Waiting for W`。
-
-**终端二：进入同一个项目目录，确认开始。**
+公开配置默认 `robot.enabled: false`，启动双摄与推理节点。连接实机时，将 `config/config.yaml` 中的 `robot.enabled` 改为 `true`，配置 CAN：
 
 ```bash
-python3 runtime/set_prompt.py
+sudo bash activate_can.sh can0
 ```
 
-输入 `W` 并按 Enter 开始执行。换任务时，在终端二输入新 prompt 并回车；当前 50 点执行完后暂停，等待再次输入 `W`。无需重新加载模型或 ROS。
+再使用同一条推理启动命令，启动程序会加入机械臂节点并发布实测状态。关闭实机控制时，状态由外部 `/joint_states` 发布器提供。
 
-**停止：在终端一按 Ctrl+C，快速停止并保存报告。** 终端二的 Ctrl+C 只关闭输入程序。程序持续运行，不自动判断任务完成；运行中急停或故障会停止下发。
+### 4. 输入与切换任务
 
-| 参数 | 默认值 | 用途 |
-| --- | --- | --- |
-| `--task` | 必填 | 任务指令，无默认 prompt |
-| `--send-motion` | 关闭 | 开启动作下发；省略则只推理 |
-| `--camera-a` / `--camera-b` | `/dev/video0` / `/dev/video2` | 第三视角 / 腕部视角，重插后须核对编号 |
-| `--can` | `can0` | CAN 接口 |
-| `--steps` | `10` | Part2 去噪次数 |
-| `--action-fps` / `--motion-speed` | `50` / `30` | 下发频率 / Piper 速度；上方示例显式使用 `20` / `10` |
-| `--iterations` | `0` | 持续运行；正整数限制推理轮数 |
-
-完整参数：`bash run_docker.sh --help`。每轮执行完整 **50 点**；六关节按增量还原，夹爪按绝对开度处理。关节默认保留 EMA、反向死区和相邻点限幅。
-
-## 4. 自行导出模型
-
-已有 OM 可跳过本节。将配套 OpenPI π0.5 PyTorch 权重放到 `models/weights/instrction_9.14_float32/model.safetensors`，准备真实样本 `data/sample.npz`：
-
-| 字段 | 格式 |
-| --- | --- |
-| `image` / `wrist_image` | 第三视角 / 腕部图像，HWC、uint8、RGB |
-| `state` | 六关节角度（度）+ 夹爪开度（毫米），共 7 维 |
-| `prompt` | 该样本的任务文本 |
+在另一个已加载同一环境的终端中运行：
 
 ```bash
-bash run_docker.sh python export/prepare_input.py --sample data/sample.npz
-bash run_docker.sh python export/prepare_part2_input.py
-bash run_docker.sh python export/export_part1.py
-bash run_docker.sh python export/export_part2.py
-bash run_docker.sh python export/compile_om.py --part 1
-bash run_docker.sh python export/compile_om.py --part 2
+ros2 run pi05_inference prompt_node
 ```
 
-生成 `outputs/onnx/part1/part1.onnx`、`outputs/onnx/part2/part2.onnx` 及 `outputs/om/part1.om`、`outputs/om/part2.om`。ONNX 的同目录外部权重必须一起保留。已有 OM 不覆盖，另用 `--output` 指定新文件。CPU 导出需预留完整模型的内存和磁盘空间。
-
-| 导出策略 | 配置 |
-| --- | --- |
-| Part1 / Part2 | 视觉语言编码及 KV cache / Action Expert 去噪；opset 17 / 14 |
-| 精度 | FP16 主计算，Softmax、归一化等敏感路径保留 FP32 |
-| 算子适配 | causal mask 累积使用 INT32、position IDs 累积保留 INT64；显式 attention 和旋转位置编码适配 |
-| ATC | `Ascend310P1`、静态 ND、`precision_mode_v2=origin`；Part1 优先高性能实现 |
-
-## 性能与精度
-
-Ascend310P1 / CANN 8.5.0，10 次去噪，每次输出 50 个动作点。
-
-| 指标 | 香橙派 | NVIDIA Orin |
-| --- | ---: | --- |
-| 部署精度 | FP16 + 部分 FP32 | 待测试 |
-| 模型平均耗时（固定真实输入，30 次） | 358.08 ms | 待测试 |
-| 实机模型平均耗时（571 个完整块） | 389.91 ms | 待测试 |
-| 每 50 点整轮耗时（25 Hz / speed 10） | 2427.31 ms | 待测试 |
-| ONNX → OM 最终动作 Cosine / RMSE | 0.999999894 / 0.00028993 | 待测试 |
-| 加载及预热后的设备 DDR 增量 | 6.508 GiB | 待测试 |
-
-精度来自单个真实样本；模型耗时不含运动，整轮包含 50 点下发。DDR 为设备全局增量，非进程独占显存；以上指标不代表抓取成功率。
-
-## 文件与报告
+输入任务并按回车，例如：
 
 ```text
-export/     模型下载、输入准备、ONNX 导出、OM 编译
-runtime/    实时推理、相机、Piper 控制、prompt 输入、报告
-include/    路径、常量、环境入口
-openpi/     上游模型代码
-config/     归一化参数和性能记录
-models/     权重与 tokenizer（不提交 Git）
-data/       原始样本与输入张量（不提交 Git）
-outputs/    onnx/、om/、runs/（不提交 Git）
-tests/      回归测试
+Pick up the blue cylindrical box and place it in the white square basket.
 ```
 
-每次推理生成 `outputs/runs/Infer_report_<时间>/result.json`（完整动作、关节反馈、相机时间戳、耗时）和 `result.log`（SDK 诊断）。运行中先写 `result.jsonl`，退出汇总为 JSON；不录制视频。
+出现 `Prompt changed:` 表示发布成功。继续输入下一行即可切换任务。串行模式会完成当前动作块，下一块使用最新任务；旧任务尚未返回的预测会被丢弃。
 
-## 常见问题
+## 四、执行与参数
 
-| 提示 | 处理 |
-| --- | --- |
-| `CAN port ... is not UP` | 重新执行 `runtime/activate_can.py` 的 Docker 命令 |
-| `Waiting for W` | 终端二输入 `W` 并回车；切换任务后同样需要确认 |
-| 找不到相机 / 视角反了 | 检查 `/dev/video*`，通过相机参数指定实际设备 |
-| `JOINT_COMMUNICATION_ERR` | 检查供电与 CAN 接线；通信故障不能靠切换模式修复 |
-| 缺少模型文件 | 按第 2 节放入配套四个文件后重启 |
+当前默认使用 `serial`（串行）：读取最新观测，预测 50 点，对六关节拟合并限制相邻目标角度，逐点发送，完成后再预测下一块。夹爪保留模型输出，执行范围由 Piper SDK 限制。
 
-## 许可证
+| 参数 | 功能 |
+|---|---|
+| `execution.serial.command_hz` | Piper 目标发送频率；当前 60 Hz，50 点约 0.83 秒 |
+| `robot.state_publish_hz` | 实测关节与夹爪状态的发布频率；当前 50 Hz |
+| `robot.motion_speed` | SDK 运动速度比例，范围 1–100；当前 80 |
+| `trajectory_fit.jerk_penalty_weight` | 抑制关节轨迹的急剧变化；当前 0.20 |
+| `trajectory_fit.terminal_preserve_points` | 末段根据运动方向减少拟合改动的点数；当前 10 |
+| `trajectory_fit.jitter_range_deg` | J1–J6 五点窗口内的小幅抖动范围 |
+| `trajectory_fit.jitter_net_ratio` | 判断反复变化时，首尾净变化与总变化量的比例上限 |
+| `trajectory_fit.max_joint_step_deg` | 每个关节相邻发送目标的最大角度差；当前 1.75° |
 
-项目采用 Apache-2.0；OpenPI、ACLLite、Piper SDK 及模型权重遵循各自许可证，见 [THIRD_PARTY.md](THIRD_PARTY.md)。
+拟合与抖动处理只作用于 J1–J6。每步角度限制的第一个参考是当前实测位置，后续参考上一条发送目标。完整配置和 ROS2 接口见[运行说明](docs/runtime.md)。
+
+RTC（执行期间重新预测）实现保留在源码中，可通过 `execution.mode: rtc` 选择，需要配套的动作 OM 和梯度分片。当前串行 OM 含专用去噪输出，切换模式时也应切换对应模型文件。
+
+## 五、工程结构
+
+| 目录 | 内容 |
+|---|---|
+| `config/` | 运行配置、归一化统计与模型资源路径 |
+| `inference/core/` | 昇腾执行、观测处理、轨迹处理、RTC 和运行记录 |
+| `inference/ros2/` | Prompt、双摄、推理与机械臂四个节点 |
+| `inference/ros2_interfaces/` | RTC 消息定义 |
+| `quantization/` | PyTorch 转换、ONNX 适配、OM 编译和算子实现 |
+| `include/` | 项目公共路径 |
+| `third_party/` | 配套 OpenPI 和 ACLLite 源码及许可证 |
+| `docs/` | 环境、运行和量化说明 |
+| `outputs/` | 本地构建与运行产物，不提交 Git |
+
+## 六、许可证
+
+本工程采用 [Apache-2.0](LICENSE)。OpenPI、Gemma 和 ACLLite 的许可及修改说明见[第三方组件](THIRD_PARTY.md)。模型和分词器按对应资源的许可证使用。

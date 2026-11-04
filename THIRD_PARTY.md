@@ -1,15 +1,11 @@
-# Third-party code
+# 第三方组件
 
-- `openpi/` is the existing board snapshot based on Physical Intelligence
-  OpenPI commit `215abfb217dbac7d5f1273282331b9b1866c0479`. Existing Ascend
-  mask/CumSum/position-encoding changes in `pi0_pytorch.py` and the Python 3.10
-  timezone fix in `shared/download.py` are retained without further changes.
-  It is not an unmodified upstream checkout. See `openpi/LICENSE` and
-  `openpi/LICENSE_GEMMA.txt`.
-- `runtime/acllite/` comes from Ascend open-source samples. Its Apache-2.0
-  license is included as `runtime/acllite/LICENSE`.
-- `include/install_transformers.py`, run by Dockerfile, installs the OpenPI transformer replacements and extends their
-  version check to Transformers 4.53.3, matching the verified board environment.
-  The checked-in OpenPI source is not modified during installation.
-- Model weights and tokenizer files are external deployment assets and are not
-  redistributed by this repository.
+| 组件 | 用途 | 许可证 |
+|---|---|---|
+| [OpenPI](https://github.com/Physical-Intelligence/openpi) | pi0.5 模型定义与导出 | [Apache-2.0](third_party/openpi/LICENSE)；[Gemma 许可](third_party/openpi/LICENSE_GEMMA.txt) |
+| ACLLite | 昇腾执行工具与参考代码 | [Apache-2.0](third_party/acllite/LICENSE) |
+| Piper SDK | CAN 通信与机械臂接口 | 使用安装包附带许可证 |
+
+OpenPI 基于提交 `215abfb217dbac7d5f1273282331b9b1866c0479`，保留昇腾注意力掩码、CumSum、位置编码和 Python 3.10 时区适配。`setup_env.sh` 将配套 Gemma、PaliGemma、SigLIP 实现安装到导出环境的 Transformers 4.53.3 中。
+
+模型权重、分词器及数据集作为独立资源提供，按各自许可证使用。

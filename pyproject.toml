@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pi05-ascend-robotics"
+version = "0.2.0"
+description = "OpenPI quantization stages and ROS2 inference on Ascend"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.21"]
+
+[project.optional-dependencies]
+motion = ["python-can==4.6.1", "piper_sdk==0.6.2", "scipy==1.15.3"]
+
+[project.scripts]
+pi05-export-onnx = "quantization.export_onnx:main"
+pi05-export-om = "quantization.export_om:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["include*", "inference", "inference.core*", "inference.include*", "quantization", "quantization.include*", "quantization.pytorch*", "quantization.onnx*", "quantization.om*"]
+exclude = ["third_party*", "tests*", "inference.ros2*", "quantization.experiments*", "quantization.om.kernels*"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 110
+
+[tool.ruff.lint]
+ignore = ["E402"]

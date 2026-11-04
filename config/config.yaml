@@ -1,0 +1,68 @@
+# Runtime paths may be absolute or relative to the project root.
+camera:
+  front_device: /dev/video0
+  wrist_device: /dev/video2
+  # Capture request; model preprocessing resizes/pads to 224x224.
+  width: 320
+  height: 240
+  fps: 30.0
+
+model:
+  # RTC-compatible 310P1 pair: vision/language W8 dynamic A8; action W16A16.
+  part1_om: config/models/om/part1.om
+  part2_om: config/models/om/part2.om
+  tokenizer: config/models/tokenizer.model
+  stats: config/norm_stats.json
+
+inference:
+  seed: 0
+  joint_names: [joint_1, joint_2, joint_3, joint_4, joint_5, joint_6]
+  gripper_name: gripper
+
+robot:
+  # Opt in only at the physical robot. False never opens the CAN device.
+  enabled: false
+  can_interface: can0
+  motion_speed: 80
+  state_publish_hz: 50.0
+  # Prepare also confirms on-site recovery if the controller is in emergency stop.
+  prepare_service: /pi05_robot/prepare
+  stop_service: /pi05_robot/stop
+
+execution:
+  # Select one mode; tune its parameters in the matching block below.
+  mode: serial
+  rtc:
+    # Piper target stream rate; RTC action points use this same control clock.
+    command_hz: 100.0
+    replanning:
+      request_after_points: 25
+      initial_latency_seconds: 0.3
+    guidance:
+      model_directory: config/models/rtc
+      max_guidance: 5.0
+  serial:
+    # Piper 逐点发送频率；整块 50 点发送完成后再预测下一块。
+    command_hz: 60.0
+    trajectory_fit:
+      jerk_penalty_weight: 0.20
+      # 最后多少个目标点按关节运动趋势逐渐减少拟合改动。
+      terminal_preserve_points: 10
+      # 五点窗口内的抖动总范围阈值，依次对应 J1 至 J6，单位为度。
+      jitter_range_deg: [0.06, 0.07, 0.10, 0.12, 0.11, 0.10]
+      # 首尾净变化占窗口总变化的比例上限，越小越严格。
+      jitter_net_ratio: 0.25
+      # 相邻目标点的单轴最大角度变化，单位为度。
+      max_joint_step_deg: 1.75
+
+topics:
+  prompt: /pi05/prompt
+  front_image: /pi05/video/front
+  wrist_image: /pi05/video/wrist
+  state: /joint_states
+  action: /pi05/action_chunk
+  latency: /pi05/input_latency
+  robot_status: /pi05/robot_status
+  rtc_request: /pi05/rtc_request
+  rtc_action: /pi05/rtc_action
+  model_status: /pi05/model_status
